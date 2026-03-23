@@ -1,0 +1,9 @@
+YSD8000 CPU
+YSD8001 UART
+YSD8002 SDカード制御
+
+YSD8800  ISA2.0
+YSD8810  ISA3.0(2.0 + 特権、 間接ジャンプ)
+
+
+
