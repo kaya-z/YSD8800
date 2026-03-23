@@ -1,0 +1,25 @@
+# force/targets/ysd8800_kern.tgt
+# YSD8800 ISA2.2 ターゲット設定（カーネル結合用）
+# Force Forth Cross Compiler v1.0
+#
+# kernel.asm と結合する場合はこちらを使用
+# CODE-START を $0A00 に設定（カーネルは $0000-$08E9 を使用）
+
+ARCH            ysd8800
+CELL-SIZE       2
+ASSEMBLER       hasm22
+
+# カーネル結合時のアドレス配置
+CODE-START      $0A00           # カーネル($0000-$08E9)の後に配置
+DATA-START      $E200           # VARIABLE/VALUE データ領域
+
+DS-REG          X
+RS-REG          SP
+TOS-REG         A
+AUX-REG         B
+
+THREAD-MODEL    subroutine
+HEX-PREFIX      $
+DEFER-MODEL     vector
+CODE-AUTO-RET   no
+LABEL-PREFIX    WORD_

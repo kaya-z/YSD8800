@@ -501,16 +501,28 @@ static void parse_toplevel(parser_t *p) {
             ir_append(p->ir, ir_make_code_block());
             p->in_code = 1;
 
-            /* END-CODEまでの行を ASM-LINE として読む */
+            /* END-CODEまでの行を ASM-LINE として読む
+             * lexer_next()でワード名を読んだ後、lexerのpushbackに
+             * 次行先頭の文字が入っている（または空）。
+             * 「行読み飛ばし」は不要 — 次行から直接読み始める。 */
             char linebuf[256];
             int  li = 0;
             int  c;
-            /* 行の途中から読み始めるので改行まで読み飛ばす */
-            while ((c = fgetc(p->lex->fp)) != EOF && c != '\n')
-                ;
+            /* pushbackを先頭に戻す: pushbackが改行でなければそれを使う */
+            int first_char = -1;
+            if (p->lex->pushback >= 0) {
+                first_char = p->lex->pushback;
+                p->lex->pushback = -1;
+                if (first_char == '\n') first_char = -1; /* 改行は捨てる */
+            }
             /* 以降、END-CODEが出るまで行単位で読む */
             while (!feof(p->lex->fp)) {
                 li = 0;
+                /* first_char: pushbackから取り出した行先頭文字 */
+                if (first_char >= 0) {
+                    if (li < 254) linebuf[li++] = (char)first_char;
+                    first_char = -1;
+                }
                 while ((c = fgetc(p->lex->fp)) != EOF && c != '\n') {
                     if (li < 254) linebuf[li++] = (char)c;
                 }

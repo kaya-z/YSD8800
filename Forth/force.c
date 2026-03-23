@@ -1,5 +1,5 @@
 /* force/force.c
- * Force Forth Cross Compiler v1.0
+ * Force Forth Cross Compiler v1.1
  * YSD8800 Forthカーネルプロジェクト
  *
  * 使用法:
