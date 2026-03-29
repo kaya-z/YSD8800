@@ -1,9 +1,12 @@
-YSD8000 CPU
+YSD8000 CPU   アーキテクチャ:CHIP8X
 YSD8001 UART
 YSD8002 SDカード制御
 
-YSD8800  ISA2.0
-YSD8810  ISA3.0(2.0 + 特権、 間接ジャンプ)
+YSD8800  ISA2.2
+YSD8801  ISA2.3(レジスタ増やす)
+
+
+YSD8810  ISA3.0(2.3 + 特権、 間接ジャンプ+乗算)
 
 
 
