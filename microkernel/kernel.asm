@@ -1,5 +1,5 @@
 ; ============================================================
-; YSD8800 マイクロカーネル kernel.asm  v0.5
+; YSD8800 マイクロカーネル kernel.asm  v0.6
 ; 純粋アセンブラ版 Track A
 ;
 ; v0.3変更点: TASK-SLEEP / TASK-WAKEUP 追加
@@ -7,6 +7,7 @@
 ;             check_layout.py によるセクション配置チェック確立
 ; v0.5変更点: MSG-SEND / MSG-RECV 追加 (IPC)
 ;             IRQ0ハンドラのstate更新をRUNNING→READYのみに修正
+; v0.6変更点: 全タスクDEAD時に HALT（_exit_idle）
 ; ============================================================
 
 ; ---- 定数 ----
@@ -367,7 +368,7 @@ _t1_main:
 ; ============================================================
 ; カーネル初期化
 ; ============================================================
-    .org $0400
+    .org $0E00
 _kstart:
     LDW  SP, #$FBFE
     LDW  X, #$F700
@@ -528,11 +529,9 @@ _exit_sched_chk:
     ADDI A, #1
     JMP  _exit_sched_loop
 _exit_idle:
-    ; 全タスクDEAD/SLEEP → EIでIRQ待ち
-    EI
-    NOP
-    DI
-    JMP  _exit_sched
+    ; 全タスクDEAD/SLEEP → HALT（全タスク終了）
+    HALT
+    ; 注: SLEEP タスクが残る場合は EI; NOP; DI; JMP _exit_sched に変更
 _exit_found:
     DI
     ; コンテキスト復元（TASK-SLEEPの_slp_sched_found以降と同じ）
