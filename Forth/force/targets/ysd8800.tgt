@@ -1,0 +1,45 @@
+# force/targets/ysd8800.tgt
+# YSD8800 ISA2.2 ターゲット設定
+# Force Forth Cross Compiler v1.0
+#
+# 書式: KEY value
+# コメント行は # で始まる
+
+# ---- アーキテクチャ基本情報 ----
+ARCH            ysd8800
+CELL-SIZE       2               # ワードサイズ (bytes)
+ASSEMBLER       hasm22
+
+# ---- アドレス ----
+CODE-START      $0030           # コード配置開始アドレス ($0018-$002F はハーネス用)
+DATA-START      $E200           # VARIABLE/VALUE データ領域開始
+
+# ---- レジスタ割り当て ----
+# X  = データスタックポインタ (DSP)
+# SP = リターンスタック (JSR/RET が使用)
+# A  = 演算主レジスタ (TOS操作)
+# B  = 演算補助レジスタ
+DS-REG          X
+RS-REG          SP
+TOS-REG         A
+AUX-REG         B
+
+# ---- スレッドモデル ----
+# subroutine: JSR/RET 方式（YSD8800採用）
+THREAD-MODEL    subroutine
+
+# ---- 16進プレフィックス ----
+HEX-PREFIX      $
+
+# ---- DEFER実装方式 ----
+# vector: DEFERはジャンプベクタ（1ワード）を持ち、間接JSRで呼ぶ
+DEFER-MODEL     vector
+
+# ---- CODE内でのRET自動生成 ----
+# yes: CODE...END-CODE の末尾に RET を自動挿入しない（CODE内で明示）
+# no:  RETURN命令から RET を自動生成（CODEブロック内は素通し）
+CODE-AUTO-RET   no
+
+# ---- ワード名マングリング ----
+# prefix: ワードラベルのプレフィックス
+LABEL-PREFIX    WORD_
