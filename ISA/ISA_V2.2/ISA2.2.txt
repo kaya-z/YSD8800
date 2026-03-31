@@ -1,0 +1,316 @@
+YSD8800 ISA2.2仕様書 （V2.2.0)
+
+1.基本仕様
+メモリ空間 65536byte(別途MMUにて拡張可能とする)
+バス幅:16bitである。
+I/Oはメモリマップドとする。
+
+2. レジスタ
+reg_id	名称	備考
+0	A	汎用
+1	B	汎用
+2	X	インデックス（暗黙使用あり）
+3	SP	スタック
+4	PC	参照専用
+5	FLAGS	暗黙
+
+3. 命令フォーマット
+
+byte0: opcode (8)
+
+拡張性プリフィックスが無い場合
+ byte1: rD(4) | rS(4)
+ [ byte2-3: imm16 ]  ※必要な命令のみ
+
+拡張性プリフィックスがある場合
+byte1: opcode (8)
+byte2: rD(4) | rS(4)
+ [ byte3-4: imm16 ]  ※必要な命令のみ
+
+4. opcode 空間
+0x00–0x1F  Control / System
+0x20–0x3F  Data Transfer
+0x40–0x5F  Arithmetic / Logic
+0x60–0x7F  Branch / Flow
+0x1F	       拡張プレフィックス
+
+5. Control / System（0x00–0x1F）
+opcode	命令	説明
+0x00	NOP	no-op
+0x01	HALT	停止
+0x02	EI	IRQ enable
+0x03	DI	IRQ disable
+0x04	IRET	割り込み復帰
+0x05	SYSCALL imm16	ソフトIRQ
+0x06	BRK	デバッグトラップ
+
+6. Data Transfer（0x20–0x3F）
+6.1 レジスタ／即値
+opcode	命令	動作
+0x20	MOV rD, rS	rD ← rS
+0x21	LDW rD, #imm16	rD ← imm
+
+6.2 絶対アドレス
+opcode	命令	動作
+0x22	LDW rD, [imm16]	rD ← mem[addr]
+0x23	STW rS, [imm16]	mem[addr] ← rS
+
+6.3 レジスタ間接
+opcode	命令	動作
+0x24	LDW rD, [rS]	rD ← mem[rS]
+0x25	STW rS, [rD]	mem[rD] ← rS
+
+6.4 X 専用インデックス（A案の核心）
+opcode	命令	動作
+0x26	LDW rD, [X + imm16]	rD ← mem[X + imm]
+0x27	STW rS, [X + imm16]	mem[X + imm] ← rS
+
+✔ X は 暗黙使用
+✔ decode が単純
+✔ FPGA で「加算 → メモリアクセス」を1パスで書ける
+
+6.5 Arithmetic / Logic（0x40–0x5F）
+opcode	命令	動作
+0x40	ADD rD, rS	rD += rS
+0x41	ADDI rD, #imm16	rD += imm
+0x42	SUB rD, rS	rD -= rS
+0x43	SUBI rD, #imm16	rD -= imm
+0x44	CMP rD, rS	FLAGS ← rD - rS
+0x45	CMPI rD, #imm16	FLAGS ← rD - imm
+
+0x50
+
+0x51	ANDI rD, #imm164rD &= imm
+0x52	OR rD, rS2rD |= rS
+0x53	ORI rD, #imm164rD |= imm
+0x54	XOR rD, rS2rD ^= rS
+0x55	XORI rD, #imm164rD ^= imm
+0x56	NOT rD2rD = ~rD
+0x57	SHL rD, rS2論理左シフト
+0x58	SHR rD, rS2論理右シフト
+0x59	SAR rD, rS2算術右シフト
+
+
+6. 6 Branch / Flow（0x60–0x7F）
+opcode	命令	動作
+0x60	JMP rel16	PC += rel
+0x61	BEQ rel16	Z=1
+0x62	BNE rel16	Z=0
+0x63	BLT rel16	N=1
+0x64	BGE rel16	N=0
+0x68	JSR imm16	push PC; PC ← imm
+0x69	RET	PC ← pop
+
+6.7 拡張プリフィックス
+
+; ------------------------------------------------------------
+; EXT サブオペコード
+; ------------------------------------------------------------
+
+; === Stack Operations ===
+0x00 : PUSH A
+0x01 : PUSH B
+0x02 : PUSH X
+
+0x03 : POP A
+0x04 : POP B
+0x05 : POP X
+
+
+; === 8bit Load ===
+0x10 : LDB A,[addr]   (imm16続く)
+0x11 : LDB A,[X]
+
+0x12 : LDB B,[addr]
+0x13 : LDB B,[X]
+
+
+; === 8bit Store ===
+0x14 : STB A,[addr]   (imm16続く)
+0x15 : STB A,[X]
+
+0x16 : STB B,[addr]
+0x17 : STB B,[X]
+
+
+; ------------------------------------------------------------
+; 動作仕様
+; ------------------------------------------------------------
+
+; PUSH
+SP = SP - 2
+mem[SP] = reg
+
+; POP
+reg = mem[SP]
+SP = SP + 2
+
+; LDB
+reg = zero_extend(mem8)
+
+; STB
+mem8 = reg & 0xFF
+
+; FLAGSは変更しない
+
+
+
+7.割り込み仕様
+7.1 概要
+
+ISA2.1 はマスク可能割り込み方式を採用する。
+割り込みベクタはメモリ上に配置されCPU はベクタテーブルを参照してハンドラへ分岐する。
+
+割り込みは以下の種類を持つ。
+
+ID	名称	説明
+0	reset	リセット
+1	irq0	外部割り込み0
+2	irq1	外部割り込み1
+3	align	アラインメント例外
+4	syscall	SYSCALL 命令
+
+拡張により ID 追加可能。
+
+7.2. ベクタテーブル
+7.2.1 配置
+
+ベクタテーブルはメモリアドレス 0x0000 から開始する。
+各エントリは 16bit（1ワード）である。
+
+vector_address = irq_id * 2
+7.2.2 メモリ配置例
+Address	内容
+0x0000	reset handler address
+0x0002	irq0 handler address
+0x0004	irq1 handler address
+0x0006	align handler address
+0x0008	syscall handler address
+
+リトルエンディアン形式で格納する。
+
+7.3. リセット動作
+
+リセット時、CPU は以下を実行する。
+
+PC ← mem[0x0000]
+FLAGS ← 0
+IE ← 0
+
+レジスタ内容は未定義（実装依存）。
+
+7.4. 割り込み受付条件
+
+割り込みは以下の条件で受理される。
+
+irq_pending >= 0
+IE == 1
+
+IE は FLAGS レジスタ内の Interrupt Enable ビットである。
+
+7.5. 割り込み受理動作
+
+割り込み受理時、CPU は次の順序で動作する。
+
+現在の PC をスタックへ push
+
+現在の FLAGS をスタックへ push
+
+IE ビットを 0 にする
+
+PC ← mem[irq_id * 2]
+
+irq_pending ← -1
+
+5.1 スタック動作
+
+スタックは SP レジスタを使用する。
+
+push16(x):
+
+SP ← SP - 2
+mem[SP] ← x
+
+pop16():
+
+x ← mem[SP]
+SP ← SP + 2
+
+スタックはワード単位（16bit）で動作する。
+
+7.6. IRET 命令
+
+IRET 実行時、CPU は以下を行う。
+
+FLAGS ← pop16()
+PC    ← pop16()
+
+これにより割り込み前の状態へ復帰する。
+
+7.7. SYSCALL 命令
+SYSCALL imm16
+
+実行時、CPU は以下を行う。
+
+irq_pending ← syscall_id
+
+syscall_id は ID=4 とする。
+
+受理は通常の割り込み条件に従う。
+
+7.8. アラインメント例外
+
+16bit アクセスが奇数アドレスに対して行われた場合、
+
+irq_pending ← align
+
+とする。
+
+7.9. ネスト割り込み
+
+割り込み受理時に IE は 0 になる。
+
+ネストを許可する場合、ハンドラ内で明示的に EI を実行する必要がある。
+ネストを防ぎたいなら ISR 先頭で DIをする。
+
+7.10. 実装要件
+
+ベクタテーブルは必ずメモリ参照とする
+
+固定ベクタ配列は禁止
+
+reset もベクタテーブル参照とする
+
+IRET は FLAGS → PC の順で復帰する
+
+7.11. アセンブラ仕様
+.vector <name> <address>
+
+は以下と等価である。
+
+.org (irq_id * 2)
+.dw  <address>
+
+
+Memory contents after reset are not modified by the CPU.
+
+The memory is assumed to be preloaded by the execution
+environment (emulator, ROM, or external memory).
+
+The reset vector at address 0x0000 must contain a valid
+entry point before reset.
+
+8.メモリマップ仕様
+8.1 Forceマシン
+
+0000-07FF  ROM (Forth kernel)
+0800-DFFF  Dictionary
+E000-F7FF  Forth workspace
+F800-FC7F  stacks
+FC80-FFFF  I/O
+
+8.2 ベアメタルマシン(各種OS対応)
+
+0000〜5FFF  ROM (BOOTローダ、BIOS)
+4000〜FBFF  RAM	
+FC80〜FFFF	  I/O
