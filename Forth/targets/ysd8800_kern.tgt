@@ -1,17 +1,28 @@
 # force/targets/ysd8800_kern.tgt
-# YSD8800 ISA2.2 ターゲット設定（カーネル結合用）
+# YSD8800 ISA2.3 ターゲット設定（カーネル結合用）
 # Force Forth Cross Compiler v1.0
 #
-# kernel.asm と結合する場合はこちらを使用
-# CODE-START を $0A00 に設定（カーネルは $0000-$08E9 を使用）
+# kernel.asm v0.7 と結合する場合はこちらを使用
+# v0.2: ISA2.3 v2.2.1メモリマップ対応
+#       CODE-START $4400（TCBプール$4000-$41FF・ワーク変数$4200-$423Fの後）
+#       DATA-START $C000（Dictionary $4000-$EFFFの中間）
+#       ASSEMBLER hasm23（ISA2.3対応）
+#
+# ISA2.3メモリマップ（Forceマシン）:
+#   $0000-$07FF  Forthカーネル本体 (ROM) <- kernel.asm配置
+#   $4000-$41FF  TCBプール (RAM, 8タスク×64B)
+#   $4200-$423F  カーネルワーク変数 (RAM)
+#   $4400-$EFFF  Forth辞書 (RAM) <- CODE-START
+#   $F000-$F7FF  Forth Workspace (RAM)
+#   $F800-$FBCF  Stacks (RAM)
+#   $FC80-$FFFF  I/O
 
 ARCH            ysd8800
 CELL-SIZE       2
-ASSEMBLER       hasm22
+ASSEMBLER       hasm23
 
-# カーネル結合時のアドレス配置
-CODE-START      $0A00           # カーネル($0000-$08E9)の後に配置
-DATA-START      $E200           # VARIABLE/VALUE データ領域
+CODE-START      $4400           # Forth辞書開始
+DATA-START      $C000           # VARIABLE/VALUE データ領域
 
 DS-REG          X
 RS-REG          SP
