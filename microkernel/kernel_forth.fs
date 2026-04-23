@@ -1,14 +1,15 @@
 \ kernel_forth.fs - YUI OS カーネル Forth 層
-\ Version: 0.2
+\ Version: 0.3
 \ YSD8800 YUI OS Microkernel
 \
 \ 設計方針:
-\   - IRQ0ハンドラ・コンテキストスイッチはアセンブラ（kernel_core.asm）
+\   - IRQ0ハンドラ・コンテキストスイッチはアセンブラ（kernel.asm）
 \   - 高レベルAPIはここで純粋Forthとして実装（移植性重視）
 \   - ハードウェア依存部は CODE...END-CODE に隔離
 \
 \ v0.1: TASK-ID, TASK-PRINT-ID をForth化
 \ v0.2: TASK-WAKEUP, TASK-CREATE, MSG-SEND, MSG-RECV をForth化
+\ v0.3: ISA2.3 v2.2.1メモリマップ対応（TCBプール$4000,スタック$F800-$FBCF,ワーク変数$42xx）
 
 \ ============================================================
 \ ハードウェア定数（移植時はここを変更）
@@ -17,11 +18,11 @@ $FC80 CONSTANT UART-TX
 $FC84 CONSTANT UART-STAT
 
 \ TCB定数
-$1000 CONSTANT TCB-POOL     \ TCBプール先頭アドレス
+$4000 CONSTANT TCB-POOL     \ TCBプール先頭アドレス（RAM $4000-$41FF）
 6     CONSTANT TCB-SHIFT    \ TCBサイズ = 64 = 1<<6
-$23FE CONSTANT CALLSTK-BASE \ タスク0のコールスタック頂上
-$21FE CONSTANT DATASTK-BASE \ タスク0のデータスタック頂上
-$0400 CONSTANT TASK-STK-GAP \ タスク間のスタック間隔
+$FBCE CONSTANT CALLSTK-BASE \ tid=0コールスタック頂上（Stacks領域 $F800-$FBCF）
+$F9CE CONSTANT DATASTK-BASE \ tid=0データスタック頂上（Stacks領域）
+$0100 CONSTANT TASK-STK-GAP \ タスク間スタック間隔（256B）
 
 \ TCBオフセット（定数）
 0  CONSTANT TCB-STATE
@@ -38,7 +39,7 @@ $0400 CONSTANT TASK-STK-GAP \ タスク間のスタック間隔
 4  CONSTANT TASK-WAIT-MSG
 
 \ カーネルワーク変数
-$E100 CONSTANT CUR-TASK-ADDR
+$4220 CONSTANT CUR-TASK-ADDR \ カーネル状態変数（RAM $4220-）
 
 \ ============================================================
 \ アーキテクチャ層 CODE...END-CODE ブリッジ
@@ -74,7 +75,7 @@ END-CODE
 \ TCBアドレス計算: tid → TCBアドレス
 : TCB-ADDR  ( tid -- addr )
     6 LSHIFT
-    $1000 + ;
+    TCB-POOL + ;
 
 \ TCBフィールドアクセス（汎用）
 \ TCB-@ ( tid off -- val ) : tid のTCB[off]を読む
