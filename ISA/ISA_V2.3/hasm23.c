@@ -1,5 +1,7 @@
-// hasm23.c - YSD8800 ISA2.3 Assembler v1.00
-// Version: 1.00 (2026-04-16)
+// hasm23.c - YSD8800 ISA2.3 Assembler v1.01
+// Version: 1.01 (2026-04-22)
+// v1.01: -c オプション追加（YOF形式オブジェクトファイル出力）
+//        lnk23 Phase 1対応: GLOBAL/LOCAL/UNDEFシンボル・R_ABS16リロケーション
 //
 // ISA2.3変更点 (ISA2.2からの差分):
 //   SYSCALL: 3バイト(opcode+imm16) → 1バイト(opcodeのみ)
@@ -32,6 +34,17 @@
 #define MAX_SYM   1024
 #define MAX_DBG   8192
 #define MAX_LINE  256
+#define MAX_REL   4096   /* YOF リロケーションエントリ上限 */
+
+/* YOF リロケーション記録（-cモード用） */
+typedef struct {
+    uint16_t offset;    /* セクション内パッチ位置 */
+    char     sym[32];   /* 参照シンボル名 */
+    uint8_t  type;      /* 0=R_ABS16 */
+} rel_entry_t;
+
+static rel_entry_t rels[MAX_REL];
+static int         rel_count = 0;
 
 // ===================== EXT prefix sub-opcode table =====================
 // フォーマット: { mnemonic, reg_name("A"/"B"/"X"/""), addr_mode, sub_opcode }
@@ -396,10 +409,117 @@ static int parse_ldw_stw_size(const char *mnem, const char *op2, int lineno) {
 
 // ===================== Main =====================
 
+/* ============================================================
+ * YOF出力（-cオプション用）
+ * lnk23_design_v1_2.docx §2 に準拠
+ * ============================================================ */
+
+/* YOF固定バイト数（設計書§2参照） */
+#define YOF_HDR_SZ  16
+#define YOF_SEC_SZ   8
+#define YOF_SYM_SZ  36
+#define YOF_REL_SZ   6
+
+/* シンボル種別（YOFと同じ定義） */
+#define YSYM_GLOBAL 'G'
+#define YSYM_LOCAL  'L'
+#define YSYM_UNDEF  'U'
+
+/*
+ * シンボル種別の判定ルール：
+ *   - アンダースコアで始まるシンボル → GLOBAL（他.objから参照可能）
+ *   - それ以外 → LOCAL（.obj内スコープ）
+ * ※ UNDEF（外部参照）はhasm23では発生しない（単一ファイルアセンブル）
+ *   UNDEFが必要になるのはscc23が分割コンパイルに対応するPhase 2以降。
+ */
+static char yof_sym_kind(const char *name) {
+    return (name[0] == '_') ? YSYM_GLOBAL : YSYM_LOCAL;
+}
+
+/* LE 16bit書き込み */
+static void yof_wr16(FILE *f, uint16_t v) {
+    fputc(v & 0xFF, f);
+    fputc((v >> 8) & 0xFF, f);
+}
+
+static int write_yof(const char *outpath, const uint8_t *code, int code_size,
+                     symbol_t *syms, int nsym,
+                     rel_entry_t *rls, int nrel) {
+    FILE *f = fopen(outpath, "wb");
+    if (!f) { perror(outpath); return -1; }
+
+    /* シンボルインデックス逆引き（リロケーションのsym_idx解決用） */
+    /* sym_idxはシンボルテーブル内のインデックス */
+    int sym_idx_for_rel[MAX_REL];
+    for (int r = 0; r < nrel; r++) {
+        sym_idx_for_rel[r] = -1;
+        for (int s = 0; s < nsym; s++) {
+            if (strcmp(syms[s].name, rls[r].sym) == 0) {
+                sym_idx_for_rel[r] = s;
+                break;
+            }
+        }
+        if (sym_idx_for_rel[r] < 0) {
+            fprintf(stderr, "hasm23: YOF: unresolved reloc sym '%s'\n", rls[r].sym);
+            fclose(f);
+            return -1;
+        }
+    }
+
+    /* --- ヘッダ (16バイト) --- */
+    /* file_offsetはセクションエントリに0固定で書くため変数不要 */
+    fwrite("YOF1", 1, 4, f);           /* magic */
+    fputc(1, f);                        /* version */
+    fputc(1, f);                        /* sec_count = 1 (TEXTのみ) */
+    yof_wr16(f, (uint16_t)nsym);       /* sym_count */
+    yof_wr16(f, (uint16_t)nrel);       /* rel_count */
+    fwrite("\0\0\0\0\0\0", 1, 6, f);   /* reserved */
+
+    /* --- セクションテーブル (8バイト × 1) --- */
+    fputc(0, f);                        /* type: TEXT=0 */
+    fputc(0x0B, f);                     /* flags: ALLOC|EXEC|READ = 0b00001011 */
+    yof_wr16(f, 0);                     /* file_offset: 0（セクションデータ先頭） */
+    yof_wr16(f, (uint16_t)code_size);  /* size */
+    yof_wr16(f, 0);                     /* load_addr: obj時点=0固定（R13） */
+
+    /* --- シンボルテーブル (36バイト × nsym) --- */
+    for (int i = 0; i < nsym; i++) {
+        char name32[32];
+        memset(name32, 0, 32);
+        memcpy(name32, syms[i].name, 31); /* 31文字+NUL保証 */
+        fwrite(name32, 1, 32, f);       /* name[32] */
+        fputc(0, f);                    /* sec_idx: 0 (唯一のTEXTセクション) */
+        yof_wr16(f, syms[i].addr);     /* offset */
+        /* リロケーション対象シンボルはUNDEF('U')で出力 */
+        char kind = yof_sym_kind(syms[i].name);
+        for (int r2 = 0; r2 < nrel; r2++) {
+            if (strcmp(rls[r2].sym, syms[i].name) == 0) { kind = YSYM_UNDEF; break; }
+        }
+        fputc(kind, f);
+    }
+
+    /* --- リロケーションテーブル (6バイト × nrel) --- */
+    for (int r = 0; r < nrel; r++) {
+        fputc(0, f);                          /* sec_idx: 0 */
+        yof_wr16(f, rls[r].offset);           /* offset（パッチ位置） */
+        yof_wr16(f, (uint16_t)sym_idx_for_rel[r]); /* sym_idx */
+        fputc(rls[r].type, f);                /* type: R_ABS16=0 */
+    }
+
+    /* --- セクションデータ (コードバイト列) --- */
+    fwrite(code, 1, code_size, f);
+
+    fclose(f);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    int opt_yof = 0;   /* -c: YOF出力モード */
+
     if (argc < 2) {
-        fprintf(stderr, "hasm23 v1.00 (2026-04-16) for YSD8800 ISA2.3\n"
-                        "usage: hasm23 file.asm\n"
+        fprintf(stderr, "hasm23 v1.01 (2026-04-22) for YSD8800 ISA2.3\n"
+                        "usage: hasm23 [-c] file.asm\n"
+                        "  -c  : output YOF object file (.obj) for lnk23\n"
                         "  ISA2.3 assembler for YSD8800\n"
                         "  SYSCALL: 1 byte (ISA2.3). Set syscall number in A before SYSCALL.\n"
                         "  Extensions over ISA2.2 (unchanged):\n"
@@ -409,7 +529,24 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    FILE *fp = fopen(argv[1], "r");
+    /* -c オプション解析 */
+    const char *asm_file = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0) {
+            opt_yof = 1;
+        } else if (argv[i][0] != '-') {
+            asm_file = argv[i];
+        } else {
+            fprintf(stderr, "hasm23: unknown option: %s\n", argv[i]);
+            return 1;
+        }
+    }
+    if (!asm_file) {
+        fprintf(stderr, "hasm23: no input file\n");
+        return 1;
+    }
+
+    FILE *fp = fopen(asm_file, "r");
     if (!fp) { perror("open"); return 1; }
 
     char linebuf[MAX_LINE];
@@ -435,7 +572,13 @@ int main(int argc, char **argv) {
 
         if (line[0] == '.') {
             if (strncmp(line, ".org", 4) == 0) {
-                pc = parse_addr(line + 4);
+                if (opt_yof) {
+                    uint16_t new_pc = parse_addr(line + 4);
+                    if (new_pc > pc) pc = new_pc; /* パディング分PCを進める */
+                    /* 後退は後でエラーにする（PASS2で検出） */
+                } else {
+                    pc = parse_addr(line + 4);
+                }
             } else if (strncmp(line, ".vector", 7) == 0) {
                 // サイズなし (別アドレスに書く)
             } else if (strncmp(line, ".word", 5) == 0 || strncmp(line, ".dw", 3) == 0) {
@@ -546,19 +689,34 @@ int main(int argc, char **argv) {
     rewind(fp);
     pc = 0; lineno = 0;
 
-    char outbin[256], outsym[256], outdbg[256];
-    snprintf(outbin, sizeof(outbin), "%s.bin", argv[1]);
-    snprintf(outsym, sizeof(outsym), "%s.sym", argv[1]);
-    snprintf(outdbg, sizeof(outdbg), "%s.dbg", argv[1]);
+    char outbin[256], outsym[256], outdbg[256], outobj[256];
+    snprintf(outbin, sizeof(outbin), "%s.bin", asm_file);
+    snprintf(outsym, sizeof(outsym), "%s.sym", asm_file);
+    snprintf(outdbg, sizeof(outdbg), "%s.dbg", asm_file);
+    snprintf(outobj, sizeof(outobj), "%s.obj", asm_file);
 
-    FILE *fb = fopen(outbin, "wb");
-    FILE *fs = fopen(outsym, "w");
+    /* -cモード: コードをメモリバッファに蓄積してYOFとして出力
+     * 非-cモード: 従来通りfbに直接書き出し（既存動作を完全保持） */
+    static uint8_t code_buf[65536];
+    int code_buf_pos = 0;
+
+    FILE *fb = opt_yof ? NULL : fopen(outbin, "wb");
+    FILE *fs = opt_yof ? NULL : fopen(outsym, "w");
     FILE *fd = fopen(outdbg, "w");
-    if (!fb || !fs || !fd) { perror("output open"); return 1; }
+    if (!opt_yof && (!fb || !fs)) { perror("output open"); return 1; }
+    if (!fd) { perror("output open dbg"); return 1; }
 
-    // シンボルテーブル出力
-    for (int i = 0; i < sym_count; i++)
-        fprintf(fs, "%04x %s\n", symbols[i].addr, symbols[i].name);
+    /* fputc相当のマクロ: -cモードはバッファへ、通常モードはファイルへ */
+#define OUT_BYTE(b) do { \
+    if (opt_yof) { code_buf[code_buf_pos++] = (uint8_t)(b); } \
+    else { fputc((b), fb); } \
+} while(0)
+
+    // 通常モード: シンボルテーブル出力
+    if (!opt_yof) {
+        for (int i = 0; i < sym_count; i++)
+            fprintf(fs, "%04x %s\n", symbols[i].addr, symbols[i].name);
+    }
 
     // DBG リセット (pass1 で溜めたものを pass2 で再収集)
     dbg_count = 0;
@@ -583,9 +741,45 @@ int main(int argc, char **argv) {
 
         if (line[0] == '.') {
             if (strncmp(line, ".org", 4) == 0) {
+                if (opt_yof) {
+                    /* -cモード: .orgは指定アドレスまでゼロパディングを挿入
+                     * これによりベクタテーブル等の絶対配置を維持できる
+                     * ただし .org でPCが戻る（後退）場合はエラー */
+                    uint16_t new_pc = parse_addr(line + 4);
+                    if (new_pc < pc) {
+                        fprintf(stderr, "hasm23: -c mode: .org $%04X < current pc $%04X (backward .org not supported)\n", new_pc, pc);
+                        return 1;
+                    }
+                    while (pc < new_pc) { OUT_BYTE(0x00); pc++; }
+                    dbg_count--;
+                    continue;
+                }
                 pc = parse_addr(line + 4);
                 fseek(fb, pc, SEEK_SET);
             } else if (strncmp(line, ".vector", 7) == 0) {
+                if (opt_yof) {
+                    /* -cモード: .vectorはcode_bufの対応位置に直接書き込む */
+                    char name[32], addrstr[64];
+                    if (sscanf(line + 7, "%31s %63s", name, addrstr) != 2) {
+                        fprintf(stderr,"Invalid .vector at line %d\n", lineno); return 1;
+                    }
+                    int id = get_vector_id(name);
+                    if (id < 0) { fprintf(stderr,"Unknown vector '%s' at line %d\n", name, lineno); return 1; }
+                    int is_lbl2 = 0; char lbl2[64] = "";
+                    uint16_t handler = parse_imm(addrstr, &is_lbl2, lbl2);
+                    if (is_lbl2) {
+                        symbol_t *s = find_sym(lbl2);
+                        if (!s) { fprintf(stderr,"Undefined label %s at line %d\n", lbl2, lineno); return 1; }
+                        handler = s->addr;
+                    }
+                    int vec_pos = id * 2;
+                    if (vec_pos + 1 < code_buf_pos) {
+                        code_buf[vec_pos]   = (uint8_t)(handler & 0xFF);
+                        code_buf[vec_pos+1] = (uint8_t)((handler >> 8) & 0xFF);
+                    }
+                    dbg_count--;
+                    continue;
+                }
                 char name[32], addrstr[64];
                 if (sscanf(line + 7, "%31s %63s", name, addrstr) != 2) {
                     fprintf(stderr,"Invalid .vector at line %d\n", lineno); return 1;
@@ -602,7 +796,7 @@ int main(int argc, char **argv) {
                 // ベクタテーブルへ書き込み、書き込み位置を元に戻す
                 long save_pos = ftell(fb);
                 fseek(fb, (long)(id * 2), SEEK_SET);
-                fputc(handler & 0xff, fb); fputc(handler >> 8, fb);
+                OUT_BYTE(handler & 0xff); OUT_BYTE(handler >> 8);
                 fseek(fb, save_pos, SEEK_SET);
                 // .vector は PC / DBG を変えない
                 dbg_count--;
@@ -616,7 +810,7 @@ int main(int argc, char **argv) {
                 int is_lbl2 = 0; char lbl2[64] = "";
                 uint16_t v = parse_imm(valstr, &is_lbl2, lbl2);
                 if (is_lbl2) { symbol_t *s = find_sym(lbl2); if (!s) { fprintf(stderr,"Undefined label %s at line %d\n",lbl2,lineno); return 1; } v = s->addr; }
-                fputc(v & 0xff, fb); fputc(v >> 8, fb); pc += 2;
+                OUT_BYTE(v & 0xff); OUT_BYTE(v >> 8); pc += 2;
             } else if (strncmp(line, ".byte", 5) == 0 || strncmp(line, ".db", 3) == 0) {
                 char valstr[128];
                 int offset = (line[1]=='b' ? 5 : 3);
@@ -625,12 +819,12 @@ int main(int argc, char **argv) {
                 }
                 if (valstr[0] == '"') {
                     char *str = valstr + 1; str[strlen(str)-1] = 0;
-                    for (char *c = str; *c; c++) { fputc(*c, fb); pc++; }
+                    for (char *c = str; *c; c++) { OUT_BYTE(*c); pc++; }
                 } else {
                     int is_lbl2 = 0; char lbl2[64] = "";
                     uint8_t v = (uint8_t)parse_imm(valstr, &is_lbl2, lbl2);
                     if (is_lbl2) { symbol_t *s = find_sym(lbl2); if (!s) { fprintf(stderr,"Undefined label %s at line %d\n",lbl2,lineno); return 1; } v = (uint8_t)s->addr; }
-                    fputc(v, fb); pc++;
+                    OUT_BYTE(v); pc++;
                 }
             }
             continue;
@@ -662,8 +856,8 @@ int main(int argc, char **argv) {
             strtoupper(reg_up);
             const ext_instr_t *ei = find_ext_instr(mnem, reg_up, EXT_NONE);
             if (!ei) { fprintf(stderr,"%s %s: unsupported register at line %d\n", mnem, op1, lineno); return 1; }
-            fputc(EXT_PREFIX, fb);
-            fputc(ei->sub_opcode, fb);
+            OUT_BYTE(EXT_PREFIX);
+            OUT_BYTE(ei->sub_opcode);
             pc += 2;
             continue;
         }
@@ -684,11 +878,11 @@ int main(int argc, char **argv) {
             }
             const ext_instr_t *ei = find_ext_instr(mnem, reg_up, am);
             if (!ei) { fprintf(stderr,"%s %s,[...]: unsupported form at line %d\n", mnem, op1, lineno); return 1; }
-            fputc(EXT_PREFIX, fb);
-            fputc(ei->sub_opcode, fb);
+            OUT_BYTE(EXT_PREFIX);
+            OUT_BYTE(ei->sub_opcode);
             pc += 2;
             if (am == EXT_ABS) {
-                fputc(imm2 & 0xff, fb); fputc(imm2 >> 8, fb);
+                OUT_BYTE(imm2 & 0xff); OUT_BYTE(imm2 >> 8);
                 pc += 2;
             }
             continue;
@@ -752,12 +946,38 @@ int main(int argc, char **argv) {
             }
             if (is_lbl2) {
                 symbol_t *s = find_sym(lbl2);
-                if (!s) { fprintf(stderr,"Undefined label %s at line %d\n", lbl2, lineno); return 1; }
-                imm2 = s->addr;
+                if (!s) {
+                    if (opt_yof && has_imm2) {
+                        /* -cモード: UNDEFシンボル + R_ABS16リロケーション */
+                        int already = 0;
+                        for (int si = 0; si < sym_count; si++) {
+                            if (strcmp(symbols[si].name, lbl2) == 0) { already = 1; break; }
+                        }
+                        if (!already && sym_count < MAX_SYM) {
+                            strcpy(symbols[sym_count].name, lbl2);
+                            symbols[sym_count].addr = 0;
+                            sym_count++;
+                        }
+                        if (rel_count < MAX_REL) {
+                            /* LDW/STW: opcode(1)+reg(1)=2バイト後が即値位置 */
+                            rels[rel_count].offset = (uint16_t)(pc + 2);
+                            memset(rels[rel_count].sym, 0, 32);
+                            memcpy(rels[rel_count].sym, lbl2, 31);
+                            rels[rel_count].type = 0; /* R_ABS16 */
+                            rel_count++;
+                        }
+                        imm2 = 0;
+                    } else {
+                        fprintf(stderr,"Undefined label %s at line %d\n", lbl2, lineno);
+                        return 1;
+                    }
+                } else {
+                    imm2 = s->addr;
+                }
             }
-            fputc(opcode2, fb); pc++;
-            fputc(((rD & 0xF) << 4) | (rS & 0xF), fb); pc++;
-            if (has_imm2) { fputc(imm2 & 0xff, fb); fputc(imm2 >> 8, fb); pc += 2; }
+            OUT_BYTE(opcode2); pc++;
+            OUT_BYTE(((rD & 0xF) << 4) | (rS & 0xF)); pc++;
+            if (has_imm2) { OUT_BYTE(imm2 & 0xff); OUT_BYTE(imm2 >> 8); pc += 2; }
             continue;
         }
 
@@ -766,7 +986,7 @@ int main(int argc, char **argv) {
             int is_lbl2 = 0; char lbl2[64] = "";
             uint16_t v = parse_imm(op1, &is_lbl2, lbl2);
             if (is_lbl2) { symbol_t *s = find_sym(lbl2); if (!s) { fprintf(stderr,"Undefined label %s at line %d\n",lbl2,lineno); return 1; } v = s->addr; }
-            fputc(v & 0xff, fb); fputc(v >> 8, fb); pc += 2;
+            OUT_BYTE(v & 0xff); OUT_BYTE(v >> 8); pc += 2;
             continue;
         }
         if (strcmp(mnem, "DB") == 0) {
@@ -783,7 +1003,7 @@ int main(int argc, char **argv) {
                     p++;
                     char *end = strchr(p, '"');
                     if (!end) { fprintf(stderr,"Unterminated string in DB at line %d\n",lineno); exit(1); }
-                    while (p < end) { fputc(*p++, fb); pc++; }
+                    while (p < end) { OUT_BYTE(*p++); pc++; }
                     p = end + 1;
                 } else {
                     char token[64]; int ti = 0;
@@ -793,7 +1013,7 @@ int main(int argc, char **argv) {
                         int is_lbl2 = 0; char lbl2[64] = "";
                         uint8_t v = (uint8_t)parse_imm(token, &is_lbl2, lbl2);
                         if (is_lbl2) { symbol_t *s = find_sym(lbl2); if (!s) { fprintf(stderr,"Undefined label %s at line %d\n",lbl2,lineno); return 1; } v = (uint8_t)s->addr; }
-                        fputc(v, fb); pc++;
+                        OUT_BYTE(v); pc++;
                     }
                 }
                 if (*p == ',') p++;
@@ -825,16 +1045,44 @@ int main(int argc, char **argv) {
             }
             if (is_lbl2) {
                 symbol_t *s = find_sym(lbl2);
-                if (!s) { fprintf(stderr,"Undefined label %s at line %d\n", lbl2, lineno); return 1; }
-                if (in->imm_is_rel) {
+                if (!s) {
+                    if (opt_yof && in->has_imm && !in->imm_is_rel) {
+                        /* -cモード: 未解決ラベル → UNDEFシンボル + R_ABS16リロケーション */
+                        /* UNDEFシンボルをシンボルテーブルに追加（重複チェック） */
+                        int already = 0;
+                        for (int si = 0; si < sym_count; si++) {
+                            if (strcmp(symbols[si].name, lbl2) == 0) { already = 1; break; }
+                        }
+                        if (!already) {
+                            if (sym_count < MAX_SYM) {
+                                strcpy(symbols[sym_count].name, lbl2);
+                                symbols[sym_count].addr = 0; /* UNDEFなので0 */
+                                sym_count++;
+                            }
+                        }
+                        /* リロケーションエントリ記録 */
+                        if (rel_count < MAX_REL) {
+                            /* パッチ位置: opcodeの後（has_reg=1なら+1） */
+                            rels[rel_count].offset = (uint16_t)(pc + 1 + in->has_reg);
+                            memset(rels[rel_count].sym, 0, 32);
+                            memcpy(rels[rel_count].sym, lbl2, 31);
+                            rels[rel_count].type = 0; /* R_ABS16 */
+                            rel_count++;
+                        }
+                        imm2 = 0; /* プレースホルダ */
+                    } else {
+                        fprintf(stderr,"Undefined label %s at line %d\n", lbl2, lineno);
+                        return 1;
+                    }
+                } else if (in->imm_is_rel) {
                     imm2 = s->addr - (pc + 1 + in->has_reg + (in->has_imm ? 2 : 0));
                 } else {
                     imm2 = s->addr;
                 }
             }
-            fputc(in->opcode, fb); pc++;
-            if (in->has_reg) { fputc(((rD & 0xF) << 4) | (rS & 0xF), fb); pc++; }
-            if (in->has_imm) { fputc(imm2 & 0xff, fb); fputc(imm2 >> 8, fb); pc += 2; }
+            OUT_BYTE(in->opcode); pc++;
+            if (in->has_reg) { OUT_BYTE(((rD & 0xF) << 4) | (rS & 0xF)); pc++; }
+            if (in->has_imm) { OUT_BYTE(imm2 & 0xff); OUT_BYTE(imm2 >> 8); pc += 2; }
         }
     }
 
@@ -843,9 +1091,25 @@ int main(int argc, char **argv) {
     for (int i = 0; i < dbg_count; i++)
         fprintf(fd, "%04x %d %s\n", dbg[i].addr, dbg[i].line, dbg[i].text);
 
-    fclose(fp); fclose(fb); fclose(fs); fclose(fd);
+    fclose(fp);
+    fclose(fd);
 
-    printf("hasm23: assembled '%s' -> %s  (ISA2.3 / SYSCALL=1byte / EXT PUSH/POP/LDB/STB + AND/OR/XOR/NOT/SHL/SHR/SAR)\n",
-           argv[1], outbin);
+    if (opt_yof) {
+        /* -cモード: YOF出力 */
+        if (write_yof(outobj, code_buf, code_buf_pos,
+                      symbols, sym_count, rels, rel_count) < 0) {
+            return 1;
+        }
+        printf("hasm23: assembled '%s' -> %s  [YOF: %d bytes code, %d syms, %d relocs]\n",
+               asm_file, outobj, code_buf_pos, sym_count, rel_count);
+    } else {
+        /* 通常モード: .bin/.sym クローズ */
+        fclose(fb);
+        fclose(fs);
+        printf("hasm23: assembled '%s' -> %s  (ISA2.3 / SYSCALL=1byte / EXT PUSH/POP/LDB/STB + AND/OR/XOR/NOT/SHL/SHR/SAR)\n",
+               asm_file, outbin);
+    }
+
+#undef OUT_BYTE
     return 0;
 }
