@@ -1,5 +1,5 @@
 ; ============================================================
-; YSD8800 マイクロカーネル kernel.asm  v0.6
+; YSD8800 マイクロカーネル kernel.asm  v0.7
 ; 純粋アセンブラ版 Track A
 ;
 ; v0.3変更点: TASK-SLEEP / TASK-WAKEUP 追加
@@ -8,29 +8,52 @@
 ; v0.5変更点: MSG-SEND / MSG-RECV 追加 (IPC)
 ;             IRQ0ハンドラのstate更新をRUNNING→READYのみに修正
 ; v0.6変更点: 全タスクDEAD時に HALT（_exit_idle）
+; v0.7変更点: ISA2.3 v2.2.1メモリマップ対応
+;             TCBプール: $1000→$4000 (RAM領域)
+;             ワーク変数: $E0xx/$E1xx→$42xx (RAM領域)
+;             タスクスタック: $2000台(ROM)→$F800-$FBCF (Stacks領域)
+;             スタックギャップ: $0400→$0100 (タスクあたり256B×2)
+;             カーネルSP切替先: $FBFE→$FBCE (Stacks領域上端)
 ; ============================================================
 
 ; ---- 定数 ----
-TCB_POOL        EQU $1000
+; --- TCBプール（RAM $4000-$41FF: 8タスク×64B=512B）---
+TCB_POOL        EQU $4000
+
 TASK_DEAD       EQU 0
 TASK_READY      EQU 1
 TASK_RUNNING    EQU 2
 TASK_SLEEPING   EQU 3
 
-CUR_TASK        EQU $E100
-NEXT_TASK       EQU $E102
-TASK_COUNT      EQU $E104
-
-L1_WK_A        EQU $E020
-L1_WK_B        EQU $E022
-L1_WK_C        EQU $E024
-L1_WK_TMP      EQU $E028
-IRQ_WK_X       EQU $E030
-IRQ_WK_A       EQU $E032
+; --- カーネルワーク変数（RAM $4200-$422F）---
+L1_WK_A        EQU $4200
+L1_WK_B        EQU $4202
+L1_WK_C        EQU $4204
+L1_WK_TMP      EQU $4208
+IRQ_WK_X       EQU $4210
+IRQ_WK_A       EQU $4212
 
 ; TASK_SLEEP専用退避エリア
-SLP_WK_DSP     EQU $E038   ; TASK_SLEEP内でのDSP退避
-SLP_WK_PC      EQU $E03A   ; TASK_SLEEP内での戻りPC退避
+SLP_WK_DSP     EQU $4218   ; TASK_SLEEP内でのDSP退避
+SLP_WK_PC      EQU $421A   ; TASK_SLEEP内での戻りPC退避
+
+; --- カーネル状態変数（RAM $4220-$4224）---
+CUR_TASK        EQU $4220
+NEXT_TASK       EQU $4222
+TASK_COUNT      EQU $4224
+
+; --- タスクスタック配置（Stacks領域 $F800-$FBCF）---
+; タスクあたり $100(256B): コールスタック上半分＋データスタック下半分
+; tid=0: コールスタック $FACE-$FBCE, データスタック $F8CE-$F9CE
+; tid=1: コールスタック $FACE-$0100=$EBxx... → tid*$100で下方向
+; CALLSTK_BASE = $FBCE (tid=0のコールスタック頂上)
+; タスクスタックギャップ = $0100
+CALLSTK_BASE    EQU $FBCE   ; tid=0 コールスタック頂上
+DATASTK_BASE    EQU $F9CE   ; tid=0 データスタック頂上 (CALLSTK_BASE - $200)
+TASK_STK_GAP    EQU $0100   ; タスク間スタックギャップ
+
+; カーネル内SPスイッチ先（Stacks領域上端）
+KERN_SP         EQU $FBCE
 
 UART_STAT       EQU $FC84
 UART_TX         EQU $FC80
@@ -61,7 +84,7 @@ IRQ0_HANDLER:
     LDW  A, [CUR_TASK]
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B
     MOV  X, A
 
@@ -105,7 +128,7 @@ _sched_chk:
     STW  A, [L1_WK_A]
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B
     MOV  X, A
     LDW  B, [X]
@@ -170,7 +193,7 @@ TASK_SLEEP:
     LDW  A, [CUR_TASK]
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B               ; A = 現TCBアドレス
     MOV  X, A               ; X → 現TCB
 
@@ -198,7 +221,7 @@ TASK_SLEEP:
 
     ; ---- スケジューラで次のREADYタスクへ切り替え ----
     ; SPをカーネルスタックに切り替えてアイドルループを安全に実行
-    LDW  A, #$FBFE
+    LDW  A, #$FBCE
     MOV  SP, A
 _slp_sched_outer:
     ; CUR_TASKの次から全8タスクを検索
@@ -218,7 +241,7 @@ _slp_sched_chk:
     STW  A, [L1_WK_A]
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B
     MOV  X, A
     LDW  B, [X]
@@ -284,7 +307,7 @@ TASK_WAKEUP:
     ; tcb_addr = TCB_POOL + tid*64 → Bに計算
     LDW  B, #6
     SHL  A, B               ; A = tid * 64
-    LDW  B, #$1000          ; TCB_POOL
+    LDW  B, #$4000          ; TCB_POOL
     ADD  A, B               ; A = TCBアドレス
     ; B = TCBアドレス（STW A,[B]のrD用）
     MOV  B, A
@@ -370,8 +393,8 @@ _t1_main:
 ; ============================================================
     .org $0E00
 _kstart:
-    LDW  SP, #$FBFE
-    LDW  X, #$F700
+    LDW  SP, #$FBCE          ; カーネルSP = $FBCE (Stacks領域上端)
+    LDW  X, #$F800             ; DSP初期値（Stacks領域先頭）
     DI
 
     ; 全TCBをDEADに
@@ -383,7 +406,7 @@ _init_tcb:
     MOV  A, B
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B
     MOV  X, A
     LDW  A, #0
@@ -394,14 +417,14 @@ _init_tcb:
 _init_done:
 
     ; ---- TCB0 (タスク0) ----
-    LDW  X, #$1000
+    LDW  X, #$4000
     LDW  A, #1              ; READY
     STW  A, [X]
     LDW  A, #$TASK0_ENTRY
     STW  A, [X + #2]
-    LDW  A, #$23FE          ; コールスタック
+    LDW  A, #$FBCE   ; tid=0 コールスタック頂上 ($FBCE)
     STW  A, [X + #4]
-    LDW  A, #$21FE          ; データスタック
+    LDW  A, #$F9CE   ; tid=0 データスタック頂上 ($F9CE)
     STW  A, [X + #6]
     LDW  A, #0
     STW  A, [X + #8]
@@ -410,14 +433,15 @@ _init_done:
     STW  A, [X + #12]
 
     ; ---- TCB1 (タスク1) ----
-    LDW  X, #$1040
+    ; tid=1: CALLSTK_BASE - 1*$100 = $FACE, DATASTK_BASE - 1*$100 = $F8CE
+    LDW  X, #$4040          ; TCB1アドレス (TCB_POOL+64)
     LDW  A, #1
     STW  A, [X]
     LDW  A, #$TASK1_ENTRY
     STW  A, [X + #2]
-    LDW  A, #$27FE
+    LDW  A, #$FACE          ; tid=1 コールスタック頂上 (CALLSTK_BASE-TASK_STK_GAP)
     STW  A, [X + #4]
-    LDW  A, #$25FE
+    LDW  A, #$F8CE          ; tid=1 データスタック頂上 (DATASTK_BASE-TASK_STK_GAP)
     STW  A, [X + #6]
     LDW  A, #0
     STW  A, [X + #8]
@@ -432,31 +456,30 @@ _init_done:
 
     ; ---- タスク0を起動 ----
     ; TCB0をRUNNINGに
-    LDW  X, #$1000
+    LDW  X, #$4000
     LDW  A, #2
     STW  A, [X]
 
-    ; SPをタスク0のコールスタック先頭-4に設定
-    ; $23FE - 4 = $23FA
-    LDW  A, #$23FA
+    ; SPをタスク0のコールスタック頂上-4に設定
+    ; CALLSTK_BASE - 4 = $FBCA
+    LDW  A, #$FBCA
     MOV  SP, A
 
     ; mem[SP+2] = TASK0_ENTRY (PC)
     ; mem[SP+0] = $0080       (FLAGS: IE=1)
-    ; Xはここでは自由に使ってよい（直後にDSPをセットし直すため）
     MOV  X, SP
     ADDI X, #2
     LDW  A, #$TASK0_ENTRY
-    STW  A, [X]             ; mem[$23FC] = $02C0
+    STW  A, [X]             ; mem[$FBCC] = TASK0_ENTRY
 
     MOV  X, SP
     LDW  A, #$80
-    STW  A, [X]             ; mem[$23FA] = $0080 (FLAGS)
+    STW  A, [X]             ; mem[$FBCA] = $0080 (FLAGS)
 
     ; DSPをタスク0の初期値にセット
-    LDW  X, #$21FE
+    LDW  X, #$F9CE   ; $F9CE
 
-    ; IRET: FLAGS($80)←pop → IE=1, PC($02C0)←pop → TASK0_ENTRY
+    ; IRET: FLAGS($80)←pop → IE=1, PC←pop → TASK0_ENTRY
     IRET
 
 ; ============================================================
@@ -464,8 +487,8 @@ _init_done:
 ; ============================================================
 
 ; ワーク変数
-TC_WK_ENTRY    EQU $E040   ; TASK-CREATE内エントリアドレス退避
-TC_WK_TID      EQU $E042   ; TASK-CREATE内tid退避
+TC_WK_ENTRY    EQU $4228   ; TASK-CREATE内エントリアドレス退避
+TC_WK_TID      EQU $422A   ; TASK-CREATE内tid退避
 
 ; ============================================================
 ; TASK-ID  ( -- tid )
@@ -491,7 +514,7 @@ TASK_EXIT:
     LDW  A, [CUR_TASK]
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B               ; A = 現TCBアドレス
     MOV  X, A
 
@@ -500,7 +523,7 @@ TASK_EXIT:
     STW  A, [X]
 
     ; SPをカーネルスタックに切り替えてスケジューラへ
-    LDW  A, #$FBFE
+    LDW  A, #$FBCE
     MOV  SP, A
 
     ; READYタスクをスキャン
@@ -519,7 +542,7 @@ _exit_sched_chk:
     STW  A, [L1_WK_A]
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B
     MOV  X, A
     LDW  B, [X]
@@ -570,14 +593,14 @@ _exit_found:
 ; TCBオフセット:
 ;   +00: state        = READY(1)
 ;   +02: saved_pc     = entry_addr
-;   +04: saved_sp     = $2000 + tid*$400 + $3FE - 4  (コールスタック頂上-4)
-;   +06: saved_x      = $2000 + tid*$400 + $1FE       (データスタック初期値)
+;   +04: saved_sp     = CALLSTK_BASE - tid*TASK_STK_GAP  (コールスタック頂上)
+;   +06: saved_x      = DATASTK_BASE - tid*TASK_STK_GAP  (データスタック初期値)
 ;   +08: saved_a      = 0
 ;   +0A: saved_b      = 0
 ;   +0C: saved_flags  = $0080 (IE=1)
 ;
-; コールスタック:  $2000 + tid*$400 〜 $23FE  (1KB)
-; データスタック:  $2000 + tid*$400 + $0200 〜 $21FE (512B)
+; コールスタック: CALLSTK_BASE - tid*$100 ($FBCE, $FACE, ...)
+; データスタック: DATASTK_BASE - tid*$100 ($F9CE, $F8CE, ...)
 ; ============================================================
     .org $0520
 TASK_CREATE:
@@ -597,7 +620,7 @@ _tc_scan:
     STW  A, [L1_WK_A]       ; tid保存
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B               ; A = TCBアドレス
     MOV  X, A
     LDW  B, [X]             ; B = state
@@ -618,13 +641,14 @@ _tc_noslot:
 
 _tc_found:
     ; tid = L1_WK_A, TCBアドレス = X
-    ; コールスタック初期アドレス: $2000 + tid*$400 + $3FE
-    ;   = $23FE + tid*$400
+    ; コールスタック頂上: CALLSTK_BASE - tid*TASK_STK_GAP
+    ;   = $FBCE - tid*$100
     LDW  A, [L1_WK_A]       ; A = tid
-    LDW  B, #10
-    SHL  A, B               ; A = tid * 1024 ($400)
-    LDW  B, #$23FE
-    ADD  A, B               ; A = コールスタック頂上 ($23FE + tid*$400)
+    LDW  B, #8
+    SHL  A, B               ; A = tid * 256 ($100)
+    LDW  B, #$FBCE
+    SUB  B, A               ; B = CALLSTK_BASE - tid*$100
+    MOV  A, B
     STW  A, [L1_WK_B]       ; コールスタック頂上を保存
 
     ; TCBを初期化
@@ -641,12 +665,13 @@ _tc_found:
     STW  A, [X + #4]
 
     ; [X+06] = saved_x（データスタック初期値）
-    ;   = $21FE + tid*$400
+    ;   = DATASTK_BASE - tid*TASK_STK_GAP = $F9CE - tid*$100
     LDW  A, [L1_WK_A]
-    LDW  B, #10
-    SHL  A, B
-    LDW  B, #$21FE
-    ADD  A, B
+    LDW  B, #8
+    SHL  A, B               ; A = tid * 256 ($100)
+    LDW  B, #$F9CE
+    SUB  B, A               ; B = DATASTK_BASE - tid*$100
+    MOV  A, B
     STW  A, [X + #6]
 
     ; [X+08] = saved_a = 0
@@ -681,15 +706,15 @@ _tc_found:
 ;   TASK_WAIT_MSG EQU 4  メッセージ待ちSLEEP
 ;
 ; ワーク変数:
-;   IPC_WK_A  EQU $E044
-;   IPC_WK_B  EQU $E046
-;   IPC_WK_X  EQU $E048
+;   IPC_WK_A  EQU $422C
+;   IPC_WK_B  EQU $422E
+;   IPC_WK_X  EQU $4230
 
 TASK_WAIT_MSG   EQU 4
 
-IPC_WK_A        EQU $E044
-IPC_WK_B        EQU $E046
-IPC_WK_X        EQU $E048
+IPC_WK_A        EQU $422C
+IPC_WK_B        EQU $422E
+IPC_WK_X        EQU $4230
 
 ; TCB IPCフィールドオフセット
 TCB_MSG_DATA    EQU 16   ; +10
@@ -724,7 +749,7 @@ MSG_SEND:
     LDW  A, [IPC_WK_A]      ; A = tid
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B               ; A = 対象TCBアドレス
     MOV  X, A               ; X → 対象TCB
 
@@ -762,7 +787,7 @@ MSG_RECV:
     LDW  A, [CUR_TASK]
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B               ; A = 自TCBアドレス
     MOV  X, A               ; X → 自TCB
 
@@ -795,7 +820,7 @@ MSG_RECV:
     STW  A, [X]
 
     ; SPをカーネルスタックに切り替えてスケジューラへ
-    LDW  A, #$FBFE
+    LDW  A, #$FBCE
     MOV  SP, A
 
     ; READYタスクを探す
@@ -812,7 +837,7 @@ _msgrecv_chk:
     STW  A, [L1_WK_A]
     LDW  B, #6
     SHL  A, B
-    LDW  B, #$1000
+    LDW  B, #$4000
     ADD  A, B
     MOV  X, A
     LDW  B, [X]
