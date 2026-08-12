@@ -1,0 +1,19 @@
+# SYSCALL受理vec実測プローブ(_poc・KY38)
+img = bytearray(0x10000)
+# リセットベクタ $0000 -> entry $0100
+entry = 0x0100
+img[0]=entry&0xFF; img[1]=(entry>>8)&0xFF
+# IRQ1 vec $0004 -> handler_A $0200 (A<-0x0004の印)
+img[4]=0x00; img[5]=0x02
+# IRQ4 vec $0008 -> handler_B $0300 (A<-0x0008の印)
+img[8]=0x00; img[9]=0x03
+# entry: LDW SP,#0xFC7E; EI; SYSCALL; HALT(fallback)
+p=0x0100
+prog=[0x21,0x30,0x7E,0xFC, 0x02, 0x05, 0x01]
+img[p:p+len(prog)]=bytes(prog)
+# handler_A @0200: LDW A,#0x0004; HALT
+img[0x200:0x205]=bytes([0x21,0x00,0x04,0x00,0x01])
+# handler_B @0300: LDW A,#0x0008; HALT
+img[0x300:0x305]=bytes([0x21,0x00,0x08,0x00,0x01])
+open('/tmp/sysprobe.bin','wb').write(img)
+print("sysprobe.bin written")
