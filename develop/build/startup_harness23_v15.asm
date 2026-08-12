@@ -1,1 +1,1 @@
-../startup_harness23_v15.asm
+../../src/toolchain/startup_harness23_v15.asm
