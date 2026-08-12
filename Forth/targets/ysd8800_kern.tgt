@@ -2,26 +2,36 @@
 # YSD8800 ISA2.3 ターゲット設定（カーネル結合用）
 # Force Forth Cross Compiler v1.0
 #
-# kernel.asm v0.7 と結合する場合はこちらを使用
+# v0.3 (2026-05-21): YUI OS Ph.4 対応
+#   CODE-START $4400 → $5100
+#   理由: memmap v1.3 にてカーネル成長予約を $4800-$50FF(2304B) へ拡張、
+#         Forth ゾーン先頭を $5000 → $5100 へ繰り下げ。
+#         FileMgr 専用領域 $4800-$505F(2144B) と物理分離するため。
+#         前チャット (HANDOVER_CHAT26 地雷 💣2) で確定。
+#
 # v0.2: ISA2.3 v2.2.1メモリマップ対応
 #       CODE-START $4400（TCBプール$4000-$41FF・ワーク変数$4200-$423Fの後）
 #       DATA-START $C000（Dictionary $4000-$EFFFの中間）
 #       ASSEMBLER hasm23（ISA2.3対応）
 #
-# ISA2.3メモリマップ（Forceマシン）:
+# ISA2.3メモリマップ（v1.3 Ph.4対応）:
 #   $0000-$07FF  Forthカーネル本体 (ROM) <- kernel.asm配置
-#   $4000-$41FF  TCBプール (RAM, 8タスク×64B)
-#   $4200-$423F  カーネルワーク変数 (RAM)
-#   $4400-$EFFF  Forth辞書 (RAM) <- CODE-START
-#   $F000-$F7FF  Forth Workspace (RAM)
-#   $F800-$FBCF  Stacks (RAM)
-#   $FC80-$FFFF  I/O
+#   $4000-$44FF  TCBプール (RAM, 16タスク×80B)
+#   $4500-$46FF  MsgPool他カーネルワーク
+#   $4700-$477F  KERN_SP専用スタック
+#   $4800-$505F  FileMgr専用領域 (Ph.4)
+#   $5100-$EFFF  Forth辞書 (RAM) <- CODE-START
+#   $F000-$F7FF  Forth Workspace
+#   $F800-$FBCF  タスクスタック
+#   $FC00-$FC3F  stack guard
+#   $FC40-$FC7F  OS共有変数
+#   $FC80-$FFFF  MMIO
 
 ARCH            ysd8800
 CELL-SIZE       2
 ASSEMBLER       hasm23
 
-CODE-START      $4400           # Forth辞書開始
+CODE-START      $5100           # Forth辞書開始 (v0.3: $4400→$5100)
 DATA-START      $C000           # VARIABLE/VALUE データ領域
 
 DS-REG          X

@@ -1,0 +1,25 @@
+0000 1 <reset>
+0000 2 <irq0>
+0000 3 <align>
+0000 4 <syscall>
+0010 8 LDW SP, #0xfffe
+0014 9 EI
+0015 10 LDW X, #0x2000
+0019 11 LDW A, #0xABCD
+001d 12 STW A, [X + #0x10]
+0021 13 LDW B, [X + #0x10]
+0025 14 CMP A, B
+0027 15 BEQ success
+002a 16 LDW A, #0xFFFF   ; 失敗
+002e 17 HALT
+002f 19 LDW A, #0x0000   ; X成功の目印
+0033 21 LDW A, #0x2001   ; 奇数アドレス
+0037 22 LDW B, [A]       ; align例外発生
+0039 24 SYSCALL #42      ; syscall (imm=42は任意)
+003c 25 HALT             ; ここには到達しないはず
+003d 28 LDW A, #0x1234   ; IRQ0目印
+0041 29 IRET
+0042 32 LDW A, #0xDEAD   ; align目印
+0046 33 IRET
+0047 36 LDW A, #0xBEEF   ; syscall目印（A=BEEF）
+004b 37 IRET

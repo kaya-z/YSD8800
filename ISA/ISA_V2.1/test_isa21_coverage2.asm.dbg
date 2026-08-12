@@ -1,0 +1,293 @@
+0000 35 .org $0020
+0020 37 LDW  SP, #$F800          ; スタック初期化
+0024 38 DI                       ; 以降 DI 維持
+0025 41 NOP
+0026 45 DI
+0027 48 JMP  skip_brk
+002a 49 BRK
+002b 55 NOP                      ; SYSCALL のあった位置を NOP で代替
+002c 57 JSR sec2_data_transfer
+002f 58 JMP _end
+0032 67 LDW  A, #$1234
+0036 68 LDW  B, #$ABCD
+003a 69 LDW  X, #$0100
+003e 71 MOV  A, B                ; A <- B
+0040 72 MOV  A, X                ; A <- X
+0042 73 MOV  A, SP               ; A <- SP (SP=0xF800)
+0044 74 MOV  B, A                ; B <- A
+0046 75 MOV  B, X                ; B <- X
+0048 76 MOV  X, A                ; X <- A
+004a 77 MOV  X, B                ; X <- B
+004c 82 LDW  A, #0
+0050 83 LDW  A, #$FFFF
+0054 84 LDW  A, #$1234
+0058 85 LDW  B, #$ABCD
+005c 86 LDW  X, #$0100
+0060 89 LDW  A, #42
+0064 90 LDW  B, #$FC80
+0068 93 LDW  A, [$0000]          ; ベクタテーブル (読み取り専用で安全)
+006c 94 LDW  A, [$0002]          ; irq0 ベクタ
+0070 95 LDW  B, [$0000]
+0074 96 LDW  B, [$FFFE]          ; 末尾偶数アドレス
+0078 99 STW  A, [$4000]
+007c 100 STW  B, [$4002]
+0080 101 STW  X, [$4004]
+0084 104 LDW  A, #$4000
+0088 105 LDW  B, #$4002
+008c 106 STW  A, [$4000]          ; mem[$4000] = 0x4000
+0090 107 STW  B, [$4002]          ; mem[$4002] = 0x4002
+0094 110 LDW  X, #$4000
+0098 111 LDW  A, [X]              ; A <- mem[$4000] = 0x4000
+009a 112 LDW  B, [X]              ; B <- mem[$4000] = 0x4000
+009c 113 LDW  X, [X]              ; X <- mem[$4000] = 0x4000 (安全: 結果も$4000)
+009e 115 LDW  X, #$4000
+00a2 116 LDW  A, #$4006
+00a6 117 STW  A, [$4000]          ; mem[$4000] = 0x4006
+00aa 118 LDW  A, [X]              ; A <- mem[$4000] = 0x4006
+00ac 119 LDW  B, [A]              ; B <- mem[$4006]
+00ae 120 LDW  X, #$4000
+00b2 121 LDW  X, [X]              ; X <- mem[$4000] = 0x4006
+00b4 124 LDW  A, [SP]
+00b6 127 LDW  X, #$4000
+00ba 128 LDW  A, #$1111
+00be 129 LDW  B, #$2222
+00c2 130 STW  A, [X]              ; mem[$4000] <- A
+00c4 131 LDW  X, #$4002
+00c8 132 STW  B, [X]              ; mem[$4002] <- B
+00ca 133 LDW  X, #$4004
+00ce 134 STW  X, [X]              ; mem[$4004] <- X (= 0x4004)
+00d0 137 LDW  X, #$4000
+00d4 138 LDW  A, [X + #0]         ; mem[$4000]
+00d8 139 LDW  A, [X + #2]         ; mem[$4002]
+00dc 140 LDW  A, [X + #4]         ; mem[$4004]
+00e0 141 LDW  B, [X + #0]
+00e4 142 LDW  B, [X + #2]
+00e8 145 LDW  X, #$4000
+00ec 146 LDW  A, #$AAAA
+00f0 147 LDW  B, #$BBBB
+00f4 148 STW  A, [X + #0]         ; mem[$4000] <- A
+00f8 149 STW  B, [X + #2]         ; mem[$4002] <- B
+00fc 150 STW  X, [X + #4]         ; mem[$4004] <- X (=$4000)
+0100 152 JSR sec3_alu
+0103 153 RET
+0104 160 LDW  A, #10
+0108 161 LDW  B, #3
+010c 162 LDW  X, #$0100
+0110 164 ADD  A, A                ; A=20
+0112 165 ADD  A, B                ; A=23
+0114 166 ADD  A, X                ; A=0x0117
+0116 167 ADD  B, A
+0118 168 ADD  B, B
+011a 169 ADD  X, A
+011c 170 ADD  X, B
+011e 173 ADDI A, #0
+0122 174 ADDI A, #1
+0126 175 ADDI A, #$FFFF
+012a 176 ADDI A, #$8000
+012e 177 ADDI B, #100
+0132 178 ADDI X, #2
+0136 181 LDW  A, #$1000
+013a 182 LDW  B, #$0100
+013e 183 LDW  X, #$0010
+0142 184 SUB  A, A                ; A=0
+0144 185 SUB  A, B
+0146 186 SUB  B, A
+0148 187 SUB  X, A
+014a 190 SUBI A, #0
+014e 191 SUBI A, #1
+0152 192 SUBI A, #$FFFF
+0156 193 SUBI B, #2
+015a 194 SUBI X, #2
+015e 197 LDW  A, #5
+0162 198 LDW  B, #3
+0166 199 LDW  X, #5
+016a 200 CMP  A, A                ; Z=1
+016c 201 CMP  A, B                ; N=0 Z=0
+016e 202 CMP  B, A                ; N=1
+0170 203 CMP  X, A                ; Z=1
+0172 204 CMP  A, X
+0174 207 CMPI A, #0
+0178 208 CMPI A, #1
+017c 209 CMPI A, #$FFFF
+0180 210 CMPI B, #$8000
+0184 211 CMPI X, #1
+0188 213 JSR sec4_branch
+018b 214 JSR sec5_ext_stack
+018e 215 JSR sec6_ext_ldb_stb
+0191 216 JSR sec7_skip
+0194 217 JSR sec8_imm_formats
+0197 218 JSR sec9_reg_matrix
+019a 219 JSR sec10_irq_flow
+019d 220 LDW  A, #$DEAD           ; 全セクション通過マーカー
+01a1 221 RET
+01a2 228 JMP  jmp_fwd
+01a5 229 NOP                      ; dead code (エンコード確認のみ)
+01a6 232 JMP  jmp_bwd_tgt
+01a9 234 JMP  branch_conds
+01ac 236 JMP  jmp_bwd_after       ; 後方→前方
+01af 240 LDW  A, #5
+01b3 241 CMPI A, #5               ; Z=1
+01b7 242 BEQ  beq_taken
+01ba 243 NOP                      ; スキップされる
+01bb 245 NOP
+01bc 248 LDW  A, #5
+01c0 249 CMPI A, #6               ; Z=0
+01c4 250 BNE  bne_taken
+01c7 251 NOP                      ; スキップされる
+01c8 253 NOP
+01c9 256 LDW  A, #3
+01cd 257 CMPI A, #5               ; 3-5=負 → N=1
+01d1 258 BLT  blt_taken
+01d4 259 NOP                      ; スキップされる
+01d5 261 NOP
+01d6 264 LDW  A, #5
+01da 265 CMPI A, #5               ; 5-5=0 → N=0
+01de 266 BGE  bge_taken
+01e1 267 NOP                      ; スキップされる
+01e2 269 NOP
+01e3 272 JSR  dummy_sub
+01e6 273 NOP                      ; RET 後ここに戻る
+01e7 275 RET
+01e8 281 LDW  A, #$1111
+01ec 282 LDW  B, #$2222
+01f0 283 LDW  X, #$3333
+01f4 285 PUSH A
+01f6 286 PUSH B
+01f8 287 PUSH X
+01fa 288 POP  X                   ; X <- $3333
+01fc 289 POP  B                   ; B <- $2222
+01fe 290 POP  A                   ; A <- $1111
+0200 293 PUSH A
+0202 294 PUSH B
+0204 295 PUSH X
+0206 296 POP  X
+0208 297 POP  B
+020a 298 POP  A
+020c 300 RET
+020d 307 LDB  A, [$0000]          ; ベクタテーブル (読み取り)
+0211 308 LDB  A, [$0001]          ; 奇数アドレスも 8bit は合法
+0215 309 LDB  A, [$4000]          ; RAM
+0219 312 LDW  X, #$4000
+021d 313 LDB  A, [X]
+021f 316 LDB  B, [$0000]
+0223 317 LDB  B, [$0001]
+0227 318 LDB  B, [$4000]
+022b 321 LDB  B, [X]
+022d 324 LDW  A, #$AB
+0231 325 STB  A, [$4010]
+0235 326 STB  A, [$4011]          ; 奇数アドレスへの 8bit ストアは合法
+0239 329 LDW  X, #$4012
+023d 330 STB  A, [X]
+023f 333 LDW  B, #$CD
+0243 334 STB  B, [$4013]
+0247 335 STB  B, [$4014]
+024b 338 LDW  X, #$4015
+024f 339 STB  B, [X]
+0251 341 RET
+0252 347 JMP  sec7_end
+0255 350 DW   $0000
+0257 351 DW   $FFFF
+0259 352 DW   $1234
+025b 353 DW   _start
+025d 354 DW   IOBUF
+025f 355 DB   0
+0260 356 DB   $FF
+0261 357 DB   255
+0262 358 DB   "A"
+0263 359 DB   "YSD8800",0
+026b 360 DB   1,2,3,4,5
+0270 361 DB   "ISA",0,"2.1",0
+0278 366 RET
+0279 373 LDW  A, #0
+027d 374 LDW  A, #255
+0281 375 LDW  A, #65535
+0285 377 LDW  A, #$00
+0289 378 LDW  A, #$FF
+028d 379 LDW  A, #$1234
+0291 380 LDW  A, #$ABCD
+0295 381 LDW  A, #$FFFF
+0299 383 LDW  A, #0x00
+029d 384 LDW  A, #0xFF
+02a1 385 LDW  A, #0x1234
+02a5 386 LDW  A, #0xABCD
+02a9 388 LDW  A, #E000
+02ad 389 LDW  A, #FC80
+02b1 391 LDW  A, [$0000]
+02b5 392 LDW  A, [$FFFE]
+02b9 394 ADDI A, #0x0001
+02bd 396 LDW  A, #$_start
+02c1 397 LDW  A, #$irq0_isr
+02c5 398 LDW  B, #$sec7_pseudo
+02c9 399 RET
+02ca 405 LDW  A, #1
+02ce 406 LDW  B, #2
+02d2 407 LDW  X, #3
+02d6 410 ADD  A, A
+02d8 411 ADD  A, B
+02da 412 ADD  A, X
+02dc 413 ADD  A, SP
+02de 414 ADD  B, A
+02e0 415 ADD  B, B
+02e2 416 ADD  B, X
+02e4 417 ADD  B, SP
+02e6 418 ADD  X, A
+02e8 419 ADD  X, B
+02ea 420 ADD  X, X
+02ec 421 ADD  X, SP
+02ee 424 SUB  A, A
+02f0 425 SUB  A, B
+02f2 426 SUB  A, X
+02f4 427 SUB  B, A
+02f6 428 SUB  B, B
+02f8 429 SUB  B, X
+02fa 430 SUB  X, A
+02fc 431 SUB  X, B
+02fe 432 SUB  X, X
+0300 435 CMP  A, A
+0302 436 CMP  A, B
+0304 437 CMP  A, X
+0306 438 CMP  B, A
+0308 439 CMP  B, B
+030a 440 CMP  B, X
+030c 441 CMP  X, A
+030e 442 CMP  X, B
+0310 443 CMP  X, X
+0312 446 ADDI A, #1
+0316 447 ADDI B, #1
+031a 448 ADDI X, #1
+031e 450 MOV  A, SP               ; SP 退避
+0320 451 ADDI SP, #2
+0324 452 SUBI SP, #2
+0328 453 MOV  SP, A               ; SP 復元
+032a 456 SUBI A, #1
+032e 457 SUBI B, #1
+0332 458 SUBI X, #1
+0336 461 CMPI A, #0
+033a 462 CMPI B, #0
+033e 463 CMPI X, #0
+0342 465 RET
+0343 473 DI
+0344 474 DI
+0345 475 RET
+0346 481 NOP
+0347 482 RET
+0348 488 DI
+0349 489 PUSH A
+034b 490 PUSH B
+034d 491 PUSH X
+034f 492 NOP
+0350 493 POP  X
+0352 494 POP  B
+0354 495 POP  A
+0356 496 IRET
+0357 499 DI
+0358 500 PUSH A
+035a 501 NOP
+035b 502 POP  A
+035d 503 IRET
+035e 506 DI
+035f 507 IRET
+0360 510 DI                       ; IRET 後の IE 連鎖を断つ
+0361 511 NOP
+0362 512 IRET
+0363 518 HALT

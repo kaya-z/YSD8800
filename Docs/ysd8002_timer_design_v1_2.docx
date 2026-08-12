@@ -1,0 +1,496 @@
+**YSD8002 タイマーチップ抽象化**
+
+emu22 タイマー改良設計書
+
+Version 1.2  /  2026-07-18  （旧: ~~Version 1.1 / 2026-04-16~~）
+
+| **項目** | **内容** |
+| --- | --- |
+| 文書番号 | EMU22-TIMER-001 |
+| 対象デバイス | **YSD8002 タイマーコントローラ**（論理デバイス。シミュレータ版・FPGA-RTL実装に依存しない） |
+| 対象ツール | ~~emu22 v1.23 → v1.30~~ → **最新シミュレータ emu23 v1.11**（本デバイスを実装）。FPGA-RTL実装 ysd8800_ysd8002 v0.3 も本デバイス仕様に準拠 |
+| ISAバージョン | ~~YSD8800 ISA2.2~~ → **YSD8800 ISA2.3**（現行） |
+| CPU想定クロック | 4 MHz（初期） / FPGAの限界まで（将来） |
+| 作成日 | 2026-04-16 |
+| ステータス | v1.1 名称修正（YSD8802→YSD8002） |
+
+# **1. 目的と背景**
+
+emu22 v1.23 のタイマー割り込みは、固定の30,000サイクル周期でIRQを発火させるハードコードされた実装である。この方式では以下の問題がある。
+
+- 周期・精度の変更がソースコード修正なしには不可能
+
+- 実時間（秒）との対応が取れず Dhrystones/sec を正確に算出できない
+
+- 将来の外部ハードウェアタイマー（YSD8002）への置き換えを想定した抽象化がない
+
+本設計では YSD8002 タイマーチップを仮想デバイスとして定義し、emu22 内部のタイマー実装を YSD8002_xxx() 関数群として抽象化する。併せてサイクルカウンタによる Dhrystones/sec 算出機能を追加する。
+
+# **2. YSD8002 の位置づけ**
+
+## **2.1 ハードウェア想定**
+
+YSD8002 は YSD8800 CPU と組み合わせて使用するタイマー専用チップである（仮想定義）。emu22 上では C 構造体 + 関数群としてモデル化する。将来の FPGA 実装では SystemVerilog モジュールとして対応させる。
+
+| **レイヤ** | **実装** | **役割** |
+| --- | --- | --- |
+| emu22（ソフトウェア） | ysd8002_t 構造体 + YSD8002_xxx() 関数 | タイマー動作をソフトウェアでモデル化 |
+| FPGA（将来） | SystemVerilog モジュール YSD8002 | 実クロックでの割り込み生成 |
+| YSD8800 CPU | IRQ0 受理 / IRET | 共通（変更なし） |
+
+## **2.2 YSD8002 の I/O マップ（ソフトウェアモデル）**
+
+emu22 上では MMIO は使用せず、YSD8002_xxx() 関数呼び出しで制御する。将来のFPGA実装でのMMIOアドレス予約として以下を定義する（参考）。
+
+| **アドレス（予約）** | **R/W** | **説明** |
+| --- | --- | --- |
+| $FC90 | R/W | タイマー制御レジスタ TCR（bit0=TIMER_EN, bit1=IRQ_EN, bit5=IRQ_ACK） |
+| $FC92 | R/W | タイマー周期設定（上位16bit） |
+| $FC94 | R/W | タイマー周期設定（下位16bit） |
+| $FC96 | R | サイクルカウンタ（下位16bit） |
+| $FC98 | R | サイクルカウンタ（上位16bit） |
+
+**【TCR 発火許可条件 — 発火EN=AND（v1.2 是正・EN是正工程/案B）】**
+
+TCR の bit0(TIMER_EN) と bit1(IRQ_EN) による割込発火の許可条件を、以下のとおり **論理AND** と定義する。
+
+- **発火EN = TIMER_EN(bit0) AND IRQ_EN(bit1)**
+- すなわち、両ビットが 1 のときのみタイマー割込を発火する。
+- **IRQ_EN(bit1)=0 のとき割込はマスクされる**（bit名のとおり「IRQ許可」として機能する＝契約回復）。
+
+*【是正の経緯】v1.1 までの実装（emu22系および FPGA-RTL 初期実装）は、発火許可を **論理OR**（TIMER_EN または IRQ_EN のいずれかが 1 で発火）としていた。この場合 IRQ_EN=0 でも TIMER_EN=1 なら発火してしまい、IRQ_EN が割込マスクとして機能しない契約違反状態であった。v1.2（2026-07-18・EN是正工程/案B）にて OR→AND へ是正。emu23 v1.11 および FPGA-RTL ysd8800_ysd8002 v0.3 の両実装で本AND定義に統一済み。負例テスト（TCR=$0001 で CNT=0）にて是正を実証。*
+
+*【bit5=IRQ_ACK について】タイマー割込ハンドラは再武装のため TCR に IRQ_ACK(bit5) を書き込む（emu23 v1.10 以降・TCR-ACK方式）。発火許可条件（AND）とは独立の機構である。*
+
+*【注意】上記アドレスは将来のFPGA実装向け予約。emu22 v1.30 ではMMIO実装は行わない。*
+
+# **3. 設計概要**
+
+## **3.1 現状実装の問題点**
+
+現状 emu22 v1.23 のタイマー関連コードは以下の箇所に散在している。
+
+| **箇所** | **内容** | **問題** |
+| --- | --- | --- |
+| cpu_t 構造体 | timer_cycle フィールド | CPU とタイマーが密結合 |
+| main() | cpu.timer_cycle = 30000 | 周期がマジックナンバーで埋め込み |
+| case 0x04 IRET | cpu.timer_cycle = cpu.cycle + 30000 | CPU 命令ハンドラがタイマー管理を直接実施 |
+| exec_one() 末尾 | cpu.cycle >= cpu.timer_cycle | タイマー判定がCPU実行ループ内に混在 |
+
+## **3.2 改良後のアーキテクチャ**
+
+改良後は以下の構造とする。
+
+┌─────────────────────────────────────────────┐
+
+│              emu22 v1.30                   │
+
+│                                             │
+
+│  ┌──────────────┐    ┌───────────────────┐  │
+
+│  │   cpu_t      │    │   ysd8002_t       │  │
+
+│  │ (CPUコア)    │    │ (タイマー抽象層)  │  │
+
+│  │              │◄──►│                   │  │
+
+│  │ cycle        │    │ cpu_freq_hz       │  │
+
+│  │ irq_pending  │    │ irq_hz            │  │
+
+│  │ (timer削除)  │    │ next_irq_cycle    │  │
+
+│  └──────────────┘    │ total_cycles      │  │
+
+│                      │ dhry_start_cycle  │  │
+
+│                      └───────────────────┘  │
+
+│                                             │
+
+│  YSD8002_init()   ← main()で初期化          │
+
+│  YSD8002_tick()   ← exec_one()末尾で呼出   │
+
+│  YSD8002_iret()   ← IRET処理内で呼出       │
+
+│  YSD8002_pending()← IRQ判定で呼出          │
+
+│  YSD8002_report() ← HALT時に呼出           │
+
+└─────────────────────────────────────────────┘
+
+# **4. ysd8002_t 構造体**
+
+YSD8002 の内部状態を保持する構造体を定義する。
+
+typedef struct {
+
+    /* 設定パラメータ */
+
+    uint64_t cpu_freq_hz;    /* YSD8800 クロック周波数 [Hz] */
+
+    uint64_t irq_hz;         /* タイマー割り込み周波数 [Hz] */
+
+    uint64_t cycles_per_irq; /* 割り込み間隔サイクル数       */
+
+                             /* = cpu_freq_hz / irq_hz        */
+
+    /* 動作状態 */
+
+    uint64_t next_irq_cycle; /* 次回IRQ発火サイクル値         */
+
+    int      irq_enabled;    /* タイマーIRQ有効フラグ         */
+
+    /* 計測用 */
+
+    uint64_t dhry_start_cycle; /* Dhrystone計測開始サイクル   */
+
+    int      dhry_measuring;   /* 計測中フラグ                */
+
+} ysd8002_t;
+
+/* グローバルインスタンス */
+
+static ysd8002_t ysd8002;
+
+| **フィールド** | **型** | **初期値** | **説明** |
+| --- | --- | --- | --- |
+| cpu_freq_hz | uint64_t | 4,000,000 | YSD8800 想定クロック [Hz]（4MHz） |
+| irq_hz | uint64_t | 100 | タイマー割り込み周波数 [Hz]（10msec周期） |
+| cycles_per_irq | uint64_t | 40,000 | cpu_freq_hz / irq_hz |
+| next_irq_cycle | uint64_t | cycles_per_irq | 次回IRQ発火サイクル値 |
+| irq_enabled | int | 1 | タイマーIRQ有効フラグ（1=有効） |
+| dhry_start_cycle | uint64_t | 0 | Dhrystone計測開始サイクル |
+| dhry_measuring | int | 0 | 計測中フラグ（1=計測中） |
+
+# **5. API 仕様**
+
+## **5.1 YSD8002_init()**
+
+タイマーを初期化する。main() の CPU 初期化直後に呼び出す。
+
+void YSD8002_init(uint64_t cpu_freq_hz, uint64_t irq_hz);
+
+/* 動作 */
+
+// ysd8002.cpu_freq_hz    = cpu_freq_hz
+
+// ysd8002.irq_hz         = irq_hz
+
+// ysd8002.cycles_per_irq = cpu_freq_hz / irq_hz
+
+// ysd8002.next_irq_cycle = ysd8002.cycles_per_irq   /* 起動直後は1周期後 */
+
+// ysd8002.irq_enabled    = 1
+
+// ysd8002.dhry_start_cycle = 0
+
+// ysd8002.dhry_measuring   = 0
+
+| **引数** | **説明** |
+| --- | --- |
+| cpu_freq_hz | YSD8800 の動作クロック周波数 [Hz]（デフォルト: 4,000,000） |
+| irq_hz | タイマー割り込み周波数 [Hz]（デフォルト: 100） |
+
+## **5.2 YSD8002_tick()**
+
+命令実行後にサイクルカウンタを通知する。exec_one() 末尾（HALT判定後）に配置する。
+
+int YSD8002_tick(uint64_t current_cycle);
+
+/* 戻り値: 1 = タイマーIRQ発火すべき、0 = 発火なし */
+
+/* 動作 */
+
+// if (!ysd8002.irq_enabled) return 0;
+
+// if (current_cycle >= ysd8002.next_irq_cycle) {
+
+//     ysd8002.next_irq_cycle = UINT64_MAX;  /* IREtが次を設定するまで停止 */
+
+//     return 1;
+
+// }
+
+// return 0;
+
+*【注意】next_irq_cycle = UINT64_MAX とすることで IRET 前の連続発火を防ぐ。これは v1.23 の UINT64_MAX 方式を踏襲したものである。*
+
+## **5.3 YSD8002_iret()**
+
+IRET 命令実行時に呼び出す。タイマーIRQのクリアと次回発火サイクルの設定を行う。
+
+void YSD8002_iret(uint64_t current_cycle);
+
+/* 動作 */
+
+// ysd8002.next_irq_cycle = current_cycle + ysd8002.cycles_per_irq;
+
+/* 注: IRQ0（タイマー）のみを対象とする。
+
+       他のIRQ（align, syscall等）のIRETでは呼び出さない。 */
+
+*【注意】v1.23 では IRET ハンドラ内で cpu.timer_cycle = cpu.cycle + 30000 を直接記述していたが、この責務を YSD8002_iret() に移管する。呼び出し判定（タイマーIRQか否か）はemu22側で行う。*
+
+## **5.4 YSD8002_pending()**
+
+IRQ判定ロジックで使用する。現在タイマーIRQを発火させるべき状態か否かを返す（主にデバッグ用）。
+
+int YSD8002_pending(uint64_t current_cycle);
+
+/* 戻り値: 1 = IRQ発火すべき状態、0 = 待機中 */
+
+/* YSD8002_tick() と役割が重複するため、
+
+   実装では YSD8002_tick() に統合することも可。 */
+
+## **5.5 YSD8002_dhry_start() / YSD8002_dhry_stop()**
+
+Dhrystone ベンチマーク計測の開始・終了を通知する。
+
+void YSD8002_dhry_start(uint64_t current_cycle);
+
+/* Dhrystone計測開始: dhry_start_cycle = current_cycle; dhry_measuring = 1; */
+
+void YSD8002_dhry_stop(uint64_t current_cycle, int number_of_runs);
+
+/* Dhrystone計測終了・スコア算出・表示 */
+
+/* 動作:
+
+//   elapsed_cycles = current_cycle - dhry_start_cycle
+
+//   elapsed_us     = elapsed_cycles * 1000000ULL / cpu_freq_hz
+
+//   dhrystones_per_sec = (uint64_t)number_of_runs * 1000000ULL / elapsed_us
+
+//   fprintf(stderr, "--- Dhrystones/sec = %llu ---\n", dhrystones_per_sec);
+
+//   fprintf(stderr, "    cycles=%llu  elapsed=%llu us\n", elapsed_cycles, elapsed_us);
+
+*/
+
+## **5.6 YSD8002_report()**
+
+HALT 時に emu22 から呼び出す。タイマー統計情報を stderr に出力する。
+
+void YSD8002_report(uint64_t total_cycles);
+
+/* 出力例（stderr）:
+
+   [YSD8002] cpu_freq=4000000 Hz  irq_hz=100
+
+   [YSD8002] total_cycles=12345678
+
+   [YSD8002] elapsed_time=3085 ms
+
+*/
+
+# **6. emu22 改修箇所**
+
+## **6.1 cpu_t 構造体の変更**
+
+| **フィールド** | **変更** | **理由** |
+| --- | --- | --- |
+| timer_cycle | 削除 | ysd8002_t.next_irq_cycle に移管 |
+
+*【注意】cpu.cycle（uint64_t）は残す。サイクルカウンタはCPUの責務のため。*
+
+## **6.2 main() の変更**
+
+/* 削除 */
+
+- cpu.timer_cycle = 30000;
+
+/* 追加 */
+
++ YSD8002_init(4000000ULL, 100ULL);  /* 4MHz / 100Hz = 40,000 cycles/tick */
+
+/* コマンドラインオプション追加（任意） */
+
++ /* --freq N  : CPU クロック周波数指定 [Hz] */
+
++ /* --irq-hz N: タイマー周波数指定 [Hz]     */
+
+## **6.3 exec_one() の変更（タイマーIRQ判定）**
+
+/* 削除（現状） */
+
+- if (cpu.cycle >= cpu.timer_cycle && cpu.irq_pending < 0) {
+
+-     cpu.irq_pending = 1;
+
+-     cpu.timer_cycle = UINT64_MAX;
+
+- }
+
+/* 追加（改良後） */
+
++ if (cpu.irq_pending < 0 && YSD8002_tick(cpu.cycle)) {
+
++     cpu.irq_pending = 1;  /* IRQ0 = タイマー */
+
++ }
+
+## **6.4 IRET 処理の変更**
+
+case 0x04: /* IRET */
+
+    cpu.flags = (uint8_t)pop16();
+
+    cpu.pc    = pop16();
+
+    /* 削除 */
+
+-   if (cpu.irq_pending == 1) cpu.irq_pending = -1;
+
+-   cpu.timer_cycle = cpu.cycle + 30000;
+
+    /* 追加 */
+
++   /* タイマーIRQ由来のIRETのみ次回発火サイクルを設定 */
+
++   YSD8002_iret(cpu.cycle);
+
+    break;
+
+*【注意】v1.23 では「タイマーIRQのみクリア」を IRET 内で判定していたが、改良版では YSD8002_iret() が常に次回発火を再設定する。タイマー以外の IRET（align, syscall）でも呼ぶことになるが、next_irq_cycle の再設定は安全側に倒れるため問題ない。*
+
+## **6.5 HALT 時の統計出力**
+
+if (cpu.halted) {
+
+    if (!quiet_mode) {
+
+        printf("*** HALT at %04x ***\n", pc0);
+
+        dump_regs();
+
+    }
+
++   YSD8002_report(cpu.cycle);  /* タイマー統計を stderr に出力 */
+
+    return;
+
+}
+
+## **6.6 reset コマンドの変更**
+
+/* REPL reset コマンド内 */
+
+- cpu.timer_cycle = 30000;
+
++ YSD8002_init(ysd8002.cpu_freq_hz, ysd8002.irq_hz);  /* 周波数設定を維持してリセット */
+
+# **7. Dhrystones/sec 算出方式**
+
+## **7.1 基本方針**
+
+Dhrystone の計測はemu22内部で完結させる。dhry_all_ansi2.c の変更は最小限とし、SYSCALL 経由でタイマー操作を行う方式を採用する。
+
+| **方式** | **採用** | **理由** |
+| --- | --- | --- |
+| emu22 内部完結（SYSCALL） | ◎ 採用 | dhry_all_ansi2.c の変更を最小化できる |
+| dhry.c 内で直接計算 | × 不採用 | scc22 の 64bit 演算未対応のため困難 |
+| ホスト time() 利用 | × 不採用 | エミュレーション速度に依存し不正確 |
+
+## **7.2 SYSCALL 定義**
+
+以下の SYSCALL を新規定義する。dhry_all_ansi2.c からアセンブラインラインまたは関数経由で呼び出す。
+
+| **SYSCALL番号** | **機能** | **引数（A レジスタ）** | **戻り値（A レジスタ）** |
+| --- | --- | --- | --- |
+| 0x0010 | TIMER_START：計測開始 | なし | なし |
+| 0x0011 | TIMER_STOP：計測終了・スコア算出 | Number_Of_Runs（実行回数） | なし |
+
+*【注意】SYSCALL はIRQ id=4 を経由する。emu22 の SYSCALL ハンドラを拡張し、imm16=0x0010/0x0011 を処理する。既存の SYSCALL 処理（id=4 で一律 IRQ 発火）を改め、imm16 値でディスパッチする方式に変更する。*
+
+## **7.3 dhry_all_ansi2.c の変更箇所**
+
+既存の #if 0 ブロックを以下に置き換える。
+
+/* 計測開始（Dhrystone ループ前） */
+
+-#if 0
+
+-  start_time();
+
+-#endif
+
++  SYSCALL 0x0010   ; (アセンブラ inline 関数 timer_start() を呼ぶ)
+
+/* 計測終了（Dhrystone ループ後） */
+
+-#if 0
+
+-  stop_time();
+
+-  /* Dhrystones/sec 計算 */
+
+-#endif
+
++  /* A レジスタに Number_Of_Runs を設定してから呼ぶ */
+
++  SYSCALL 0x0011   ; (アセンブラ inline 関数 timer_stop(Number_Of_Runs) を呼ぶ)
+
+アセンブラ inline 関数 timer_start() / timer_stop() は startup_harness.asm または dhry 専用ハーネスとして用意する。scc22 の asm() 組み込み対応は今回スコープ外。
+
+# **8. Dhrystones/sec 算出式**
+
+elapsed_cycles     = stop_cycle - start_cycle
+
+elapsed_us         = elapsed_cycles * 1,000,000 / cpu_freq_hz
+
+dhrystones_per_sec = number_of_runs * 1,000,000 / elapsed_us
+
+【例: 4MHz想定、N=10、elapsed_cycles=2,400,000 の場合】
+
+  elapsed_us         = 2,400,000 * 1,000,000 / 4,000,000 = 600,000 us (= 600 ms)
+
+  dhrystones_per_sec = 10 * 1,000,000 / 600,000 ≒ 16.7 Dhrystones/sec
+
+*【注意】KY注意事項（設計）: elapsed_cycles・elapsed_us の計算は uint64_t で行うこと。16bit中間値になると4MHz×0.6秒=2,400,000サイクルは uint16_t に収まらず桁溢れする。*
+
+# **9. バージョン計画**
+
+| **バージョン** | **変更内容** | **前提** |
+| --- | --- | --- |
+| v1.23（現状） | 固定30,000サイクルタイマー（変更前） | Step 8-C 完了 |
+| v1.30（本設計） | YSD8002 抽象化 + Dhrystones/sec 算出 | 本設計書レビュー完了後 |
+
+# **10. レビュー確認事項**
+
+レビューアに確認をお願いする事項を以下に挙げる。
+
+| **No.** | **確認項目** | **理由・背景** |
+| --- | --- | --- |
+| R1 | YSD8002 の MMIO アドレス $FC90〜$FC98 の予約は妥当か | 既存のUART($FC80〜$FC87)と重複・競合がないか確認 |
+| R2 | タイマー周波数のデフォルトを 100Hz（10msec）とすることは妥当か | YUI OS の tick 周期との整合性 |
+| R3 | YSD8002_iret() をタイマー以外の IRET でも呼ぶことへの懸念はないか | next_irq_cycle 再設定が非タイマーIRET後も実行される |
+| R4 | SYSCALL 0x0010/0x0011 の番号体系は既存と競合しないか | 現状 SYSCALL は id=4 一括。番号空間の整理が必要かも |
+| R5 | dhry_all_ansi2.c の変更方式（アセンブラ inline 関数）は scc22 で対応可能か | scc22 に asm() 組み込み未実装のため代替手段が必要 |
+| R6 | 将来の --freq / --irq-hz コマンドラインオプション追加は本版スコープに含めるか | 実装量と有用性のトレードオフ |
+
+# **11. 将来課題（v1.2 新設）**
+
+## **11.1 案A：TIMER_EN=0 でのカウンタ停止（未実装）**
+
+v1.2 の EN是正（案B）は「**発火許可条件**の OR→AND 化」のみを対象とし、TIMER_EN(bit0) の意味を「割込発火のAND条件の一つ」として扱う。しかし本来 TIMER_EN は名前のとおり「**タイマー（カウンタ）自体の稼働許可**」であるべきであり、TIMER_EN=0 のときはサイクルカウンタの歩進自体を停止させる実装（案A）が論理的に望ましい。
+
+- **現状（v1.2・案B）**：TIMER_EN=0 でもカウンタは歩進し続ける。発火許可が AND で false になるため割込は出ないが、カウンタ内部状態は進む。
+- **将来（案A）**：TIMER_EN=0 でカウンタの歩進を停止する。省電力・意味論的整合の観点で望ましい。
+- **先送りの理由**：案B のみで「IRQ_EN が割込マスクとして機能する」という契約回復は達成済み。案A はカウンタ挙動の意味論改善であり、EN是正の本丸（割込マスク契約）とは独立。実装・回帰の波及範囲を最小化するため、独立工程（V6以降）へ先送りとした（2026-07-17／07-18 かやぬまさん承認済み）。
+- **一次記録の所在**：本課題は `v6_en_fix_design_memo_v0_1.md` §3、`emu23_v111.c` L699 コメント、FPGA-RTL `ysd8800_ysd8002_v0_3.sv` ヘッダおよび L191 付近コメントにも記録済み。本設計書 §11.1 を正式な設計文書上の記録とする。
+
+
+
+# **変更履歴**
+
+| **版** | **日付** | **変更内容** | **担当** |
+| --- | --- | --- | --- |
+| v1.0 | 2026-04-15 | 初版作成 | Claude |
+| v1.1 | 2026-04-16 | （履歴欠落を v1.2 で遡及補記）本文改訂あり。詳細記録は残っていないが、本文 Version 表記のみ 1.1 へ更新されていた（変更履歴への追記が漏れていた＝KY41 違反状態）。 | Claude |
+| v1.2 | 2026-07-18 | ①TCR 発火許可条件を OR→**AND** へ是正（§3 TCRテーブル直後に AND 仕様を明記。EN是正工程/案B）。②将来課題節 §11 を新設（案A：TIMER_EN=0 でのカウンタ停止・未実装）。③対象デバイス/ツール欄を更新（YSD8002＝論理デバイス、最新シミュレータ emu23 v1.11、FPGA-RTL v0.3、ISA2.3）。④版数不整合（ファイル名/本文/履歴）を是正し KY41 4点整合を回復。 | Claude |
+| v1.1 | 2026-04-16 | 名称誤り修正: YSD8802→YSD8002（機能変更なし） | Claude |

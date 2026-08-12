@@ -1,0 +1,964 @@
+0020 393 DI
+0021 394 IRET
+0030 402 DI
+0031 403 STW  A, [IRQ_WK_A]
+0035 404 STW  X, [IRQ_WK_X]
+0039 405 STW  B, [IRQ_WK_B]          ; v0.12.6: 中断時のBを退避(A/Bレジスタ完全保護)
+003d 408 LDW  A, [CUR_TASK]
+0041 409 STW  A, [L1_WK_TMP]
+0045 410 LDW  B, #6
+0049 411 SHL  A, B
+004b 412 STW  A, [L1_WK_C]
+004f 413 LDW  A, [L1_WK_TMP]
+0053 414 LDW  B, #4
+0057 415 SHL  A, B
+0059 416 LDW  B, [L1_WK_C]
+005d 417 ADD  A, B
+005f 418 LDW  B, #$4000
+0063 419 ADD  A, B
+0065 420 MOV  X, A
+0067 426 LDW  A, [X]
+0069 427 CMPI A, #2                  ; RUNNING?
+006d 428 BNE  _irq_sched             ; 非RUNNING（アイドル/WAIT中）→保存スキップ
+0070 431 LDW  A, [IRQ_WK_X]
+0074 432 STW  A, [X + #6]
+0078 433 MOV  A, SP
+007a 434 ADDI A, #4
+007e 435 STW  A, [X + #4]
+0082 436 STW  X, [MISC_WK_X]
+0086 437 MOV  X, SP
+0088 438 ADDI X, #2
+008c 439 LDW  A, [X]
+008e 440 LDW  X, [MISC_WK_X]
+0092 441 STW  A, [X + #2]
+0096 442 STW  X, [MISC_WK_X]
+009a 443 MOV  X, SP
+009c 444 LDW  A, [X]
+009e 445 LDW  X, [MISC_WK_X]
+00a2 446 STW  A, [X + #12]
+00a6 447 LDW  A, [IRQ_WK_A]
+00aa 448 STW  A, [X + #8]
+00ae 449 LDW  A, [IRQ_WK_B]          ; v0.12.6: SAVED_B保存
+00b2 450 STW  A, [X + #10]           ; v0.12.6: TCB_SAVED_B
+00b6 453 LDW  A, #1
+00ba 454 STW  A, [X]
+00bc 457 LDW  A, [CUR_TASK]
+00c0 458 STW  A, [L1_WK_B]
+00c4 459 ADDI A, #1
+00c8 461 CMPI A, #16                 ; MAX_TASKS=16 v0.12.1: #8→#16
+00cc 462 BLT  _sched_chk
+00cf 463 LDW  A, #0
+00d3 465 STW  A, [L1_WK_A]
+00d7 466 STW  A, [L1_WK_TMP]
+00db 467 LDW  B, #6
+00df 468 SHL  A, B
+00e1 469 STW  A, [L1_WK_C]
+00e5 470 LDW  A, [L1_WK_TMP]
+00e9 471 LDW  B, #4
+00ed 472 SHL  A, B
+00ef 473 LDW  B, [L1_WK_C]
+00f3 474 ADD  A, B
+00f5 475 LDW  B, #$4000
+00f9 476 ADD  A, B
+00fb 477 MOV  X, A
+00fd 478 LDW  B, [X]
+00ff 479 CMPI B, #1
+0103 480 BEQ  _sched_found
+0106 481 LDW  A, [L1_WK_A]
+010a 482 ADDI A, #1
+010e 483 JMP  _sched
+0111 486 LDW  A, [L1_WK_A]
+0115 487 STW  A, [CUR_TASK]
+0119 488 LDW  A, #2
+011d 489 STW  A, [X]
+011f 490 LDW  A, [X + #6]
+0123 491 LDW  B, [X + #4]
+0127 492 SUBI B, #4
+012b 493 MOV  SP, B
+012d 494 LDW  B, [X + #2]
+0131 495 STW  X, [MISC_WK_X]
+0135 496 MOV  X, SP
+0137 497 ADDI X, #2
+013b 498 STW  B, [X]
+013d 499 LDW  X, [MISC_WK_X]
+0141 500 LDW  B, [X + #12]
+0145 501 ORI  B, #$80
+0149 502 STW  X, [MISC_WK_X]
+014d 503 MOV  X, SP
+014f 504 STW  B, [X]
+0151 505 LDW  X, [MISC_WK_X]
+0155 506 LDW  B, [X + #8]            ; v0.12.6: B=SAVED_A
+0159 507 STW  B, [IRQ_WK_A]          ; v0.12.6: 一時退避(保存完了済IRQ_WK_A再利用)
+015d 508 LDW  B, [X + #10]           ; v0.12.6: B=SAVED_B
+0161 509 STW  B, [IRQ_WK_B]          ; v0.12.6: 一時退避
+0165 510 MOV  X, A
+0167 511 LDW  A, [IRQ_WK_A]          ; v0.12.6: A=SAVED_A復元
+016b 512 LDW  B, [IRQ_WK_B]          ; v0.12.6: B=SAVED_B復元
+016f 513 IRET
+01c0 521 DI
+01c1 524 STW  X, [SLP_WK_DSP]
+01c5 525 STW  X, [MISC_WK_X]
+01c9 526 MOV  X, SP
+01cb 527 LDW  A, [X]
+01cd 528 STW  A, [SLP_WK_PC]
+01d1 529 LDW  X, [MISC_WK_X]
+01d5 532 LDW  A, [CUR_TASK]
+01d9 533 STW  A, [L1_WK_TMP]
+01dd 534 LDW  B, #6
+01e1 535 SHL  A, B
+01e3 536 STW  A, [L1_WK_C]
+01e7 537 LDW  A, [L1_WK_TMP]
+01eb 538 LDW  B, #4
+01ef 539 SHL  A, B
+01f1 540 LDW  B, [L1_WK_C]
+01f5 541 ADD  A, B
+01f7 542 LDW  B, #$4000
+01fb 543 ADD  A, B
+01fd 544 MOV  X, A
+01ff 547 LDW  A, [SLP_WK_PC]
+0203 548 STW  A, [X + #2]
+0207 549 MOV  A, SP
+0209 550 ADDI A, #2
+020d 551 STW  A, [X + #4]
+0211 552 LDW  A, [SLP_WK_DSP]
+0215 553 STW  A, [X + #6]
+0219 554 LDW  A, #$80
+021d 555 STW  A, [X + #12]
+0221 556 LDW  A, #3
+0225 557 STW  A, [X]                 ; SLEEPING
+0227 560 LDW  A, #$477E              ; v0.12.3: $FBCE→$477E (KERN_SP_TOP)
+022b 561 MOV  SP, A
+022d 564 JMP  _sched_common
+02c0 574 LDW  A, [CUR_TASK]
+02c4 575 STW  A, [L1_WK_B]          ; 開始tid（1周検出用）
+02c8 576 ADDI A, #1
+02cc 578 CMPI A, #16                 ; MAX_TASKS=16 v0.12.1: #8→#16
+02d0 579 BLT  _sc_chk
+02d3 580 LDW  A, #0
+02d7 582 LDW  B, [L1_WK_B]          ; 開始tidと比較（読むだけ）
+02db 583 CMP  A, B
+02dd 584 BEQ  _sc_idle
+02e0 585 STW  A, [L1_WK_A]
+02e4 587 STW  A, [L1_WK_TMP]
+02e8 588 LDW  B, #6
+02ec 589 SHL  A, B
+02ee 590 STW  A, [L1_WK_C]
+02f2 591 LDW  A, [L1_WK_TMP]
+02f6 592 LDW  B, #4
+02fa 593 SHL  A, B
+02fc 594 LDW  B, [L1_WK_C]
+0300 595 ADD  A, B
+0302 596 LDW  B, #$4000
+0306 597 ADD  A, B
+0308 598 MOV  X, A
+030a 599 LDW  B, [X]
+030c 600 CMPI B, #1
+0310 601 BEQ  _sc_found
+0313 602 LDW  A, [L1_WK_A]
+0317 603 ADDI A, #1
+031b 604 JMP  _sc_sched
+031e 606 EI
+031f 607 NOP
+0320 608 DI
+0321 609 JMP  _sched_common
+0324 612 DI
+0325 613 LDW  A, [L1_WK_A]
+0329 614 STW  A, [CUR_TASK]
+032d 615 LDW  A, #2
+0331 616 STW  A, [X]                 ; RUNNING
+0333 617 LDW  A, [X + #6]            ; 次DSP
+0337 618 LDW  B, [X + #4]
+033b 619 SUBI B, #4
+033f 620 MOV  SP, B
+0341 621 LDW  B, [X + #2]
+0345 622 STW  X, [MISC_WK_X]
+0349 623 MOV  X, SP
+034b 624 ADDI X, #2
+034f 625 STW  B, [X]
+0351 626 LDW  X, [MISC_WK_X]
+0355 627 LDW  B, [X + #12]
+0359 628 ORI  B, #$80
+035d 629 STW  X, [MISC_WK_X]
+0361 630 MOV  X, SP
+0363 631 STW  B, [X]
+0365 632 LDW  X, [MISC_WK_X]
+0369 633 MOV  X, A
+036b 634 IRET
+0380 642 LDW  A, [X]                 ; A = tid (TOS)
+0382 643 ADDI X, #2
+0386 644 STW  A, [L1_WK_TMP]
+038a 645 LDW  B, #6
+038e 646 SHL  A, B
+0390 647 STW  A, [L1_WK_C]
+0394 648 LDW  A, [L1_WK_TMP]
+0398 649 LDW  B, #4
+039c 650 SHL  A, B
+039e 651 LDW  B, [L1_WK_C]
+03a2 652 ADD  A, B
+03a4 653 LDW  B, #$4000
+03a8 654 ADD  A, B
+03aa 655 MOV  X, A                   ; X = TCBアドレス
+03ac 656 LDW  A, [X]
+03ae 657 CMPI A, #3
+03b2 658 BEQ  _wakeup_do             ; SLEEPING
+03b5 659 CMPI A, #5
+03b9 660 BEQ  _wakeup_do             ; WAIT_IPC
+03bc 661 JMP  _wakeup_done
+03bf 663 LDW  A, #1
+03c3 664 STW  A, [X]                 ; READY
+03c5 666 RET
+03d0 674 STW  X, [MISC_WK_X]
+03d4 675 LDW  X, #$FC80
+03d8 677 LDW  A, [UART_STAT]
+03dc 678 CMPI A, #0
+03e0 679 BEQ  _tp1
+03e3 680 LDW  A, #$54                ; 'T'
+03e7 681 STB  A, [X]
+03e9 683 LDW  A, [UART_STAT]
+03ed 684 CMPI A, #0
+03f1 685 BEQ  _tp2
+03f4 686 LDW  A, [CUR_TASK]
+03f8 687 LDW  B, #$30
+03fc 688 ADD  A, B
+03fe 689 STB  A, [X]
+0400 691 LDW  A, [UART_STAT]
+0404 692 CMPI A, #0
+0408 693 BEQ  _tp3
+040b 694 LDW  A, #$0A                ; LF
+040f 695 STB  A, [X]
+0411 696 LDW  X, [MISC_WK_X]
+0415 697 RET
+0440 704 SUBI X, #2
+0444 705 LDW  A, [CUR_TASK]
+0448 706 STW  A, [X]
+044a 707 RET
+0460 715 DI
+0461 718 LDW  A, [CUR_TASK]
+0465 719 STW  A, [L1_WK_TMP]
+0469 720 LDW  B, #6
+046d 721 SHL  A, B
+046f 722 STW  A, [L1_WK_C]
+0473 723 LDW  A, [L1_WK_TMP]
+0477 724 LDW  B, #4
+047b 725 SHL  A, B
+047d 726 LDW  B, [L1_WK_C]
+0481 727 ADD  A, B
+0483 728 LDW  B, #$4000
+0487 729 ADD  A, B
+0489 730 MOV  X, A
+048b 732 LDW  A, #0
+048f 733 STW  A, [X]                 ; DEAD
+0491 735 LDW  A, #$477E              ; v0.12.3: $FBCE→$477E (KERN_SP_TOP)
+0495 736 MOV  SP, A
+0497 737 JMP  _sched_common          ; 共通スケジューラへ
+0520 748 LDW  A, [X]
+0522 749 ADDI X, #2
+0526 750 STW  A, [TC_WK_ENTRY]
+052a 751 STW  X, [TC_WK_TID]
+052e 752 DI
+052f 754 LDW  A, #0
+0533 756 CMPI A, #16                 ; MAX_TASKS=16 v0.12.1: #8→#16
+0537 757 BEQ  _tc_noslot
+053a 758 STW  A, [L1_WK_A]
+053e 759 STW  A, [L1_WK_TMP]
+0542 760 LDW  B, #6
+0546 761 SHL  A, B
+0548 762 STW  A, [L1_WK_C]
+054c 763 LDW  A, [L1_WK_TMP]
+0550 764 LDW  B, #4
+0554 765 SHL  A, B
+0556 766 LDW  B, [L1_WK_C]
+055a 767 ADD  A, B
+055c 768 LDW  B, #$4000
+0560 769 ADD  A, B
+0562 770 MOV  X, A
+0564 771 LDW  B, [X]
+0566 772 CMPI B, #0
+056a 773 BEQ  _tc_found
+056d 774 LDW  A, [L1_WK_A]
+0571 775 ADDI A, #1
+0575 776 JMP  _tc_scan
+0578 779 LDW  X, [TC_WK_TID]
+057c 780 EI
+057d 781 LDW  A, #$FFFF
+0581 782 SUBI X, #2
+0585 783 STW  A, [X]
+0587 784 RET
+0588 790 LDW  A, [L1_WK_A]
+058c 791 LDW  B, #7
+0590 792 SHL  A, B                   ; A = tid × $80
+0592 793 LDW  B, #$F07E              ; CALLSTK_BASE (tid=0 頂上、偶数)
+0596 794 ADD  A, B                   ; A = $F07E + tid×$80 = CALLSTK_TOP(tid)
+0598 795 STW  A, [MISC_WK_X]
+059c 798 LDW  A, #1
+05a0 799 STW  A, [X]                 ; READY
+05a2 800 LDW  A, [TC_WK_ENTRY]
+05a6 801 STW  A, [X + #2]
+05aa 802 LDW  A, [MISC_WK_X]
+05ae 803 STW  A, [X + #4]            ; saved_sp
+05b2 807 LDW  A, [L1_WK_A]
+05b6 808 LDW  B, #7
+05ba 809 SHL  A, B                   ; A = tid × $80
+05bc 810 LDW  B, #$F87E              ; DATASTK_BASE (tid=0 頂上、偶数)
+05c0 811 ADD  A, B                   ; A = $F87E + tid×$80 = DATASTK_TOP(tid)
+05c2 812 STW  A, [X + #6]            ; saved_x (Forth DSP初期値)
+05c6 814 LDW  A, #0
+05ca 815 STW  A, [X + #8]
+05ce 816 STW  A, [X + #10]
+05d2 817 LDW  A, #$80
+05d6 818 STW  A, [X + #12]           ; saved_flags = IE=1
+05da 819 LDW  A, #$FFFF              ; IDX_NIL v0.12.5
+05de 820 STW  A, [X + #14]           ; ipc_queue_tail = IDX_NIL (v0.12.5: $6.2)
+05e2 821 LDW  A, #0
+05e6 822 STW  A, [X + #16]
+05ea 823 STW  A, [X + #18]
+05ee 824 STW  A, [X + #20]
+05f2 825 STW  A, [X + #22]
+05f6 826 STW  A, [X + #24]           ; ipc_valid = 0
+05fa 827 STW  A, [X + #26]
+05fe 828 STW  A, [X + #28]
+0602 829 LDW  A, #$FFFF              ; IDX_NIL v0.12.5
+0606 830 STW  A, [X + #30]           ; ipc_queue_head = IDX_NIL (v0.12.5: §6.2)
+060a 832 LDW  X, [TC_WK_TID]
+060e 833 EI
+060f 834 LDW  A, [L1_WK_A]
+0613 835 SUBI X, #2
+0617 836 STW  A, [X]
+0619 837 RET
+0700 846 JSR $CED4
+0703 847 JMP TASK0_ENTRY
+0740 856 DI
+0741 858 LDW  A, [X]
+0743 859 ADDI X, #2
+0747 860 STW  A, [IPC4_WK_DST]      ; 宛先 tid 保存
+074b 861 STW  X, [IPC4_WK_X]        ; msg3 先頭 DSP ポインタ保存（_ipc4_enqueue で使用）
+074f 864 JSR  _ipc4_enqueue
+0752 868 LDW  X, [IPC4_WK_X]
+0756 869 ADDI X, #8                  ; 4ワード × 2B = 8B
+075a 870 EI
+075b 871 RET
+07e0 882 DI
+07e1 883 STW  X, [MISC_WK_X]        ; DSP退避
+07e5 887 JSR  _calc_self_tcb         ; A=self_tcb, X=self_tcb, IPC4_WK_SRCTCB=self_tcb
+07e8 890 LDW  A, [X + #30]           ; ipc_queue_head
+07ec 891 CMPI A, #$FFFF              ; == IDX_NIL?
+07f0 892 BNE  _ipc4recv_dequeue
+07f3 894 LDW  A, #$IPC4_RECV
+07f7 895 STW  A, [X + #2]            ; saved_pc = IPC4_RECV冒頭（v0.12.6統合）
+07fb 896 MOV  A, SP
+07fd 899 STW  A, [X + #4]            ; saved_sp = SP
+0801 900 LDW  A, [MISC_WK_X]
+0805 901 STW  A, [X + #6]            ; saved_x = DSP
+0809 902 LDW  A, #$80
+080d 903 STW  A, [X + #12]           ; saved_flags = IE=1
+0811 904 LDW  A, #5
+0815 905 STW  A, [X]                 ; state = WAIT_IPC
+0817 906 LDW  A, #$477E
+081b 907 MOV  SP, A
+081d 908 JMP  _sched_common
+0820 913 LDW  A, [X + #30]           ; idx = ipc_queue_head
+0824 914 STW  A, [IPC4_WK_IDX]
+0828 917 LDW  B, #4
+082c 918 SHL  A, B
+082e 919 LDW  B, #$4500
+0832 920 ADD  A, B
+0834 921 STW  A, [L1_WK_A]          ; entry_addr
+0838 924 MOV  X, A                   ; X = entry_addr
+083a 925 LDW  A, [X + #10]           ; nxt = entry.next
+083e 926 LDW  X, [IPC4_WK_SRCTCB]
+0842 927 STW  A, [X + #30]           ; ipc_queue_head = nxt
+0846 928 CMPI A, #$FFFF              ; nxt == IDX_NIL?
+084a 929 BNE  _ipc4recv_notempty
+084d 930 STW  A, [X + #14]           ; キュー空になった → tail も NIL
+0851 934 LDW  X, [L1_WK_A]          ; X = entry_addr
+0855 935 LDW  A, [X + #0]            ; entry.sender
+0859 936 LDW  X, [IPC4_WK_SRCTCB]
+085d 937 STW  A, [X + #26]           ; last_sender_tid = entry.sender
+0861 943 LDW  A, [MISC_WK_X]        ; A = DSP
+0865 944 STW  A, [L1_WK_TMP]        ; L1_WK_TMP = DSP（カウンタ兼用をやめDSP保持）
+0869 945 LDW  A, [L1_WK_A]
+086d 946 ADDI A, #10                 ; A = &entry.msg[3]+2
+0871 947 STW  A, [L1_WK_C]          ; L1_WK_C = entryポインタ
+0875 948 LDW  B, #4                  ; B = ループカウンタ
+0879 950 LDW  X, [L1_WK_C]          ; X = entryポインタ
+087d 951 SUBI X, #2
+0881 952 STW  X, [L1_WK_C]          ; entryポインタ更新
+0885 953 LDW  A, [X]                 ; A = msg[i]
+0887 954 LDW  X, [L1_WK_TMP]        ; X = DSP
+088b 955 SUBI X, #2
+088f 956 STW  X, [L1_WK_TMP]        ; DSP更新
+0893 957 STW  A, [X]                 ; DSP に push
+0895 958 SUBI B, #1                  ; v0.12.6: SUBIがZフラグを更新するためCMPI不要（4B削減）
+0899 959 BNE  _msg_copy_loop
+089c 963 LDW  B, [MSG_POOL_FREE]     ; B = old free_head
+08a0 964 LDW  X, [L1_WK_A]          ; X = entry_addr
+08a4 965 STW  B, [X + #10]           ; entry.next = old MSG_POOL_FREE
+08a8 966 LDW  A, [IPC4_WK_IDX]
+08ac 967 STW  A, [MSG_POOL_FREE]     ; MSG_POOL_FREE = idx
+08b0 970 LDW  X, [L1_WK_TMP]
+08b4 971 EI
+08b5 972 RET
+08c0 981 DI
+08c1 983 LDW  A, [X]
+08c3 984 ADDI X, #2
+08c7 985 STW  A, [IPC4_WK_DST]
+08cb 986 STW  X, [IPC4_WK_X]        ; msg3 先頭 DSP ポインタ保存
+08cf 989 JSR  _ipc4_enqueue
+08d2 990 CMPI A, #$FFFE              ; ERR_IPC_NOSLOT?
+08d6 991 BNE  _ipc4call_enq_ok
+08d9 994 LDW  X, [IPC4_WK_X]
+08dd 995 ADDI X, #8                  ; msg3/2/1/0 の4ワード消費
+08e1 996 LDW  A, #0
+08e5 997 SUBI X, #2
+08e9 998 STW  A, [X]                 ; r0 = 0
+08eb 999 SUBI X, #2
+08ef 1000 STW  A, [X]                 ; r1 = 0
+08f1 1001 SUBI X, #2
+08f5 1002 STW  A, [X]                 ; r2 = 0
+08f7 1003 LDW  A, #$FFFE              ; ERR_IPC_NOSLOT
+08fb 1004 SUBI X, #2
+08ff 1005 STW  A, [X]                 ; r3 = ERR_IPC_NOSLOT
+0901 1006 EI
+0902 1007 RET
+0903 1011 LDW  X, [IPC4_WK_X]
+0907 1012 ADDI X, #8
+090b 1013 STW  X, [IPC4_WK_X]        ; 消費後DSP保存（RESUME で使用）
+090f 1016 LDW  A, [CUR_TASK]
+0913 1017 STW  A, [L1_WK_TMP]
+0917 1018 LDW  B, #6
+091b 1019 SHL  A, B
+091d 1020 STW  A, [L1_WK_C]
+0921 1021 LDW  A, [L1_WK_TMP]
+0925 1022 LDW  B, #4
+0929 1023 SHL  A, B
+092b 1024 LDW  B, [L1_WK_C]
+092f 1025 ADD  A, B
+0931 1026 LDW  B, #$4000
+0935 1027 ADD  A, B                   ; A = &self_tcb
+0937 1028 STW  A, [IPC4_WK_SRCTCB]
+093b 1029 MOV  X, A
+093d 1030 LDW  A, #0
+0941 1031 STW  A, [X + #24]           ; ipc_valid = 0
+0945 1034 LDW  A, #$IPC4_CALL_RESUME
+0949 1035 STW  A, [X + #2]            ; saved_pc = IPC4_CALL_RESUME
+094d 1036 MOV  A, SP
+094f 1038 STW  A, [X + #4]            ; saved_sp = SP
+0953 1039 LDW  A, [IPC4_WK_X]
+0957 1040 STW  A, [X + #6]            ; saved_x = 消費後DSP
+095b 1041 LDW  A, #$80
+095f 1042 STW  A, [X + #12]           ; saved_flags = IE=1
+0963 1043 LDW  A, #6
+0967 1044 STW  A, [X]                 ; state = WAIT_REPLY
+0969 1045 LDW  A, #$477E
+096d 1046 MOV  SP, A
+096f 1047 JMP  _sched_common
+0972 1051 DI
+0973 1052 LDW  A, [CUR_TASK]
+0977 1053 STW  A, [L1_WK_TMP]
+097b 1054 LDW  B, #6
+097f 1055 SHL  A, B
+0981 1056 STW  A, [L1_WK_C]
+0985 1057 LDW  A, [L1_WK_TMP]
+0989 1058 LDW  B, #4
+098d 1059 SHL  A, B
+098f 1060 LDW  B, [L1_WK_C]
+0993 1061 ADD  A, B
+0995 1062 LDW  B, #$4000
+0999 1063 ADD  A, B
+099b 1064 STW  A, [IPC4_WK_SRCTCB]
+099f 1066 STW  X, [IPC4_WK_X]
+09a3 1067 LDW  X, [IPC4_WK_SRCTCB]
+09a7 1069 LDW  A, [X + #22]           ; ipc_msg[3]
+09ab 1070 LDW  X, [IPC4_WK_X]
+09af 1071 SUBI X, #2
+09b3 1072 STW  A, [X]
+09b5 1073 STW  X, [IPC4_WK_X]
+09b9 1075 LDW  X, [IPC4_WK_SRCTCB]
+09bd 1076 LDW  A, [X + #20]           ; ipc_msg[2]
+09c1 1077 LDW  X, [IPC4_WK_X]
+09c5 1078 SUBI X, #2
+09c9 1079 STW  A, [X]
+09cb 1080 STW  X, [IPC4_WK_X]
+09cf 1082 LDW  X, [IPC4_WK_SRCTCB]
+09d3 1083 LDW  A, [X + #18]           ; ipc_msg[1]
+09d7 1084 LDW  X, [IPC4_WK_X]
+09db 1085 SUBI X, #2
+09df 1086 STW  A, [X]
+09e1 1087 STW  X, [IPC4_WK_X]
+09e5 1089 LDW  X, [IPC4_WK_SRCTCB]
+09e9 1090 LDW  A, [X + #16]           ; ipc_msg[0]
+09ed 1091 LDW  B, #0
+09f1 1092 STW  B, [X + #24]           ; ipc_valid = 0（消費完了）
+09f5 1093 LDW  X, [IPC4_WK_X]
+09f9 1094 SUBI X, #2
+09fd 1095 STW  A, [X]
+09ff 1096 EI
+0a00 1097 RET
+0b00 1107 DI
+0b01 1108 LDW  A, [X]
+0b03 1109 ADDI X, #2
+0b07 1110 STW  X, [MISC_WK_X]
+0b0b 1111 STW  A, [IPC4_WK_DST]
+0b0f 1112 STW  A, [L1_WK_TMP]
+0b13 1113 LDW  B, #6
+0b17 1114 SHL  A, B
+0b19 1115 STW  A, [L1_WK_C]
+0b1d 1116 LDW  A, [L1_WK_TMP]
+0b21 1117 LDW  B, #4
+0b25 1118 SHL  A, B
+0b27 1119 LDW  B, [L1_WK_C]
+0b2b 1120 ADD  A, B
+0b2d 1121 LDW  B, #$4000
+0b31 1122 ADD  A, B
+0b33 1123 STW  A, [IPC4_WK_SRCTCB]
+0b37 1124 LDW  X, [MISC_WK_X]
+0b3b 1125 LDW  A, [X]
+0b3d 1126 ADDI X, #2
+0b41 1127 STW  X, [MISC_WK_X]
+0b45 1128 LDW  X, [IPC4_WK_SRCTCB]
+0b49 1129 STW  A, [X + #16]
+0b4d 1130 LDW  X, [MISC_WK_X]
+0b51 1131 LDW  A, [X]
+0b53 1132 ADDI X, #2
+0b57 1133 STW  X, [MISC_WK_X]
+0b5b 1134 LDW  X, [IPC4_WK_SRCTCB]
+0b5f 1135 STW  A, [X + #18]
+0b63 1136 LDW  X, [MISC_WK_X]
+0b67 1137 LDW  A, [X]
+0b69 1138 ADDI X, #2
+0b6d 1139 STW  X, [MISC_WK_X]
+0b71 1140 LDW  X, [IPC4_WK_SRCTCB]
+0b75 1141 STW  A, [X + #20]
+0b79 1142 LDW  X, [MISC_WK_X]
+0b7d 1143 LDW  A, [X]
+0b7f 1144 ADDI X, #2
+0b83 1145 STW  X, [MISC_WK_X]
+0b87 1146 LDW  X, [IPC4_WK_SRCTCB]
+0b8b 1147 STW  A, [X + #22]
+0b8f 1148 LDW  A, #1
+0b93 1149 STW  A, [X + #24]
+0b97 1150 LDW  A, [CUR_TASK]
+0b9b 1151 STW  A, [X + #26]
+0b9f 1152 LDW  A, [X]
+0ba1 1153 CMPI A, #6
+0ba5 1154 BNE  _ipc4reply_done
+0ba8 1155 LDW  A, #1
+0bac 1156 STW  A, [X]
+0bae 1158 LDW  X, [MISC_WK_X]
+0bb2 1159 EI
+0bb3 1160 RET
+0d00 1184 STW  A, [IRQ1_WK_A]
+0d04 1185 STW  B, [IRQ1_WK_B]
+0d08 1186 STW  X, [IRQ1_WK_X]
+0d0c 1189 LDW  A, [IRQ_STAT]
+0d10 1190 STW  A, [IRQ1_WK_STAT]
+0d14 1193 ANDI A, #$0001
+0d18 1194 BEQ  _irq1_skip_uart        ; UART RXでなければスキップ
+0d1b 1197 LDW  A, [UART_RX]
+0d1f 1198 ANDI A, #$00FF              ; 下位8bitのみが受信値
+0d23 1201 JSR  rx_push                ; A=byte を push (COUNT>=16なら破棄)
+0d26 1205 LDW  B, #$0002
+0d2a 1206 STW  B, [UART_STAT]
+0d2e 1209 LDW  B, #$0001
+0d32 1210 STW  B, [IRQ_STAT]
+0d36 1213 JSR  wake_uart_waiter
+0d39 1218 LDW  A, [IRQ1_WK_STAT]
+0d3d 1219 ANDI A, #$0002
+0d41 1220 BEQ  _irq1_done             ; STORでなければ終了
+0d44 1221 JSR  _handle_stor
+0d47 1225 LDW  A, [IRQ1_WK_A]
+0d4b 1226 LDW  B, [IRQ1_WK_B]
+0d4f 1227 LDW  X, [IRQ1_WK_X]
+0d53 1228 IRET
+0d54 1240 STW  A, [IRQ1_WK_BYTE]     ; byte退避
+0d58 1242 LDW  A, [UART_RX_COUNT]
+0d5c 1243 LDW  B, #16
+0d60 1244 CMP  A, B
+0d62 1245 BGE  _rx_push_overrun       ; COUNT >= 16 → 破棄
+0d65 1248 LDW  B, [UART_RX_HEAD]     ; B = HEAD (インデックス 0-15)
+0d69 1249 LDW  A, #$FC46              ; UART_RX_RING_BUF v0.12.0: $F020→$FC46
+0d6d 1250 ADD  A, B                   ; A = &buf[HEAD]
+0d6f 1251 MOV  X, A                   ; X = &buf[HEAD]
+0d71 1252 LDW  A, [IRQ1_WK_BYTE]
+0d75 1253 STB  A, [X]                 ; buf[HEAD] = byte (STB A,[X])
+0d77 1256 LDW  A, [UART_RX_HEAD]     ; A = 現HEAD
+0d7b 1257 ADDI A, #1
+0d7f 1258 ANDI A, #$000F              ; HEAD = (HEAD + 1) mod 16
+0d83 1259 STW  A, [UART_RX_HEAD]
+0d87 1262 LDW  A, [UART_RX_COUNT]
+0d8b 1263 ADDI A, #1
+0d8f 1264 STW  A, [UART_RX_COUNT]
+0d93 1267 RET
+0e00 1277 LDW  SP, #$477E              ; v0.12.3: $FBCE→$477E (KERN_SP_TOP)
+0e04 1278 LDW  X, #$F800
+0e08 1279 DI
+0e09 1289 LDW  A, #0
+0e0d 1290 LDW  X, #$4700
+0e11 1292 CMPI X, #$4780               ; v0.12.3修正: CMP→CMPI（即値比較には CMPI を使用）
+0e15 1293 BGE  _init_kernsp_done
+0e18 1294 STW  A, [X]
+0e1a 1295 ADDI X, #2
+0e1e 1296 JMP  _init_kernsp
+0e21 1298 LDW  A, #$A55A
+0e25 1299 LDW  X, #$4700
+0e29 1300 STW  A, [X]                  ; canary $A55A at $4700
+0e2b 1309 LDW  A, #$A55A
+0e2f 1310 LDW  X, #$FC00               ; GUARD_BASE
+0e33 1312 CMPI X, #$FC40               ; GUARD_BASE + $40 (64B), 即値比較にはCMPI使用
+0e37 1313 BGE  _init_guard_done
+0e3a 1314 STW  A, [X]
+0e3c 1315 ADDI X, #2
+0e40 1316 JMP  _init_guard
+0e43 1320 LDW  B, #0
+0e47 1322 CMPI B, #16                 ; MAX_TASKS=16 v0.12.1: #8→#16
+0e4b 1323 BEQ  _init_done
+0e4e 1324 STW  B, [L1_WK_A]
+0e52 1325 MOV  A, B
+0e54 1326 STW  A, [L1_WK_TMP]
+0e58 1327 LDW  B, #6
+0e5c 1328 SHL  A, B
+0e5e 1329 STW  A, [L1_WK_C]
+0e62 1330 LDW  A, [L1_WK_TMP]
+0e66 1331 LDW  B, #4
+0e6a 1332 SHL  A, B
+0e6c 1333 LDW  B, [L1_WK_C]
+0e70 1334 ADD  A, B
+0e72 1335 LDW  B, #$4000
+0e76 1336 ADD  A, B
+0e78 1337 MOV  X, A
+0e7a 1338 LDW  A, #0
+0e7e 1339 STW  A, [X + #0]
+0e82 1340 STW  A, [X + #2]
+0e86 1341 STW  A, [X + #4]
+0e8a 1342 STW  A, [X + #6]
+0e8e 1343 STW  A, [X + #8]
+0e92 1344 STW  A, [X + #10]
+0e96 1345 STW  A, [X + #12]
+0e9a 1346 STW  A, [X + #14]
+0e9e 1347 STW  A, [X + #16]
+0ea2 1348 STW  A, [X + #18]
+0ea6 1349 STW  A, [X + #20]
+0eaa 1350 STW  A, [X + #22]
+0eae 1351 STW  A, [X + #24]
+0eb2 1352 STW  A, [X + #26]
+0eb6 1353 STW  A, [X + #28]
+0eba 1354 STW  A, [X + #30]
+0ebe 1355 STW  A, [X + #32]
+0ec2 1356 STW  A, [X + #34]
+0ec6 1357 STW  A, [X + #36]
+0eca 1358 STW  A, [X + #38]
+0ece 1359 STW  A, [X + #40]
+0ed2 1360 STW  A, [X + #42]
+0ed6 1361 STW  A, [X + #44]
+0eda 1362 STW  A, [X + #46]
+0ede 1363 STW  A, [X + #48]
+0ee2 1364 STW  A, [X + #50]
+0ee6 1365 STW  A, [X + #52]
+0eea 1366 STW  A, [X + #54]
+0eee 1367 STW  A, [X + #56]
+0ef2 1368 STW  A, [X + #58]
+0ef6 1369 STW  A, [X + #60]
+0efa 1370 STW  A, [X + #62]
+0efe 1371 STW  A, [X + #64]
+0f02 1372 STW  A, [X + #66]
+0f06 1373 STW  A, [X + #68]
+0f0a 1374 STW  A, [X + #70]
+0f0e 1375 STW  A, [X + #72]
+0f12 1376 STW  A, [X + #74]
+0f16 1377 STW  A, [X + #76]
+0f1a 1378 STW  A, [X + #78]
+0f1e 1379 LDW  B, [L1_WK_A]
+0f22 1380 ADDI B, #1
+0f26 1381 JMP  _init_tcb
+0f29 1386 LDW  A, #0
+0f2d 1387 LDW  X, #$FC56
+0f31 1388 STW  A, [X]              ; UART_RX_HEAD($FC56) = 0
+0f33 1389 LDW  X, #$FC58
+0f37 1390 STW  A, [X]              ; UART_RX_TAIL($FC58) = 0
+0f39 1391 LDW  X, #$FC5A
+0f3d 1392 STW  A, [X]              ; UART_RX_COUNT($FC5A) = 0
+0f3f 1393 LDW  X, #$FC5C
+0f43 1394 STW  A, [X]              ; UART_DRV_TID($FC5C) = 0
+0f45 1395 LDW  X, #$FC5E
+0f49 1396 STW  A, [X]              ; UART_WAIT_TID($FC5E) = 0
+0f4b 1400 LDW  X, #$FC64
+0f4f 1401 STW  A, [X]              ; STOR_DRV_TID($FC64) = 0
+0f51 1402 LDW  X, #$FC66
+0f55 1403 STW  A, [X]              ; STOR_WAIT_TID($FC66) = 0
+0f57 1404 LDW  X, #$FC68
+0f5b 1405 STW  A, [X]              ; STOR_LAST_STAT($FC68) = 0
+0f5d 1408 LDW  X, #$FC60
+0f61 1409 LDW  A, #$42             ; 'B'
+0f65 1410 STB  A, [X]
+0f67 1411 LDW  X, #$FC61
+0f6b 1412 LDW  A, #$43             ; 'C'
+0f6f 1413 STB  A, [X]
+0f71 1414 LDW  X, #$FC62
+0f75 1415 LDW  A, #0               ; NUL
+0f79 1416 STB  A, [X]
+0f7b 1423 LDW  X, #$4000
+0f7f 1424 LDW  A, #1
+0f83 1425 STW  A, [X]              ; READY（後でRUNNINGに変更）
+0f85 1426 LDW  A, #$WORD_OS_START
+0f89 1427 STW  A, [X + #2]         ; PC = WORD_OS_START
+0f8d 1428 LDW  A, #$F07E
+0f91 1429 STW  A, [X + #4]         ; saved_sp（コールスタック top）
+0f95 1430 LDW  A, #$F87E
+0f99 1431 STW  A, [X + #6]         ; saved_x（データスタック top）
+0f9d 1432 LDW  A, #$80
+0fa1 1433 STW  A, [X + #12]        ; FLAGS
+0fa5 1434 LDW  A, #$FFFF           ; IDX_NIL
+0fa9 1435 STW  A, [X + #14]        ; ipc_queue_tail = IDX_NIL  v0.12.5
+0fad 1436 STW  A, [X + #30]        ; ipc_queue_head = IDX_NIL  v0.12.5
+0fb1 1441 JSR init_msg_pool
+0fb4 1444 LDW  A, #0
+0fb8 1445 STW  A, [MEM_TID_ADDR]
+0fbc 1447 LDW  A, #1
+0fc0 1448 STW  A, [TASK_COUNT]     ; 起動タスク数 = 1（tid=0のみ）
+0fc4 1449 LDW  A, #0
+0fc8 1450 STW  A, [CUR_TASK]
+0fcc 1456 LDW  X, #$4000
+0fd0 1457 LDW  A, #2
+0fd4 1458 STW  A, [X]              ; RUNNING
+0fd6 1459 LDW  A, #$F07A           ; v0.12.2: $FBCA→$F07A (CALLSTK_TOP-4, 偶数)
+0fda 1460 MOV  SP, A
+0fdc 1461 MOV  X, SP
+0fde 1462 ADDI X, #2
+0fe2 1463 LDW  A, #$WORD_OS_START           ; WORD_OS_START
+0fe6 1464 STW  A, [X]
+0fe8 1465 MOV  X, SP
+0fea 1466 LDW  A, #$80
+0fee 1467 STW  A, [X]
+0ff0 1468 LDW  X, #$F87E           ; v0.12.2: $FB4E→$F87E (DATASTK_TOP tid=0, 偶数)
+0ff4 1469 IRET
+1000 1500 LDW  A, [SD_STAT]       ; 1回目（BUSYラッチクリア）
+1004 1501 LDW  A, [SD_STAT]       ; 2回目（実際の値）
+1008 1504 STW  A, [STOR_LAST_STAT]
+100c 1507 LDW  A, #0
+1010 1508 STW  A, [SD_IRQ_CTRL]
+1014 1511 LDW  A, #$0002
+1018 1512 STW  A, [IRQ_STAT]
+101c 1515 JSR  wake_stor_waiter
+101f 1517 RET
+1020 1541 LDW  A, [STOR_WAIT_TID]
+1024 1542 BEQ  _wake_stor_done        ; tid==0 ならスキップ
+1027 1545 STW  A, [L1_WK_TMP]         ; tid退避
+102b 1546 LDW  B, #6
+102f 1547 SHL  A, B                   ; A = tid*64
+1031 1548 STW  A, [L1_WK_C]
+1035 1549 LDW  A, [L1_WK_TMP]
+1039 1550 LDW  B, #4
+103d 1551 SHL  A, B                   ; A = tid*16
+103f 1552 LDW  B, [L1_WK_C]
+1043 1553 ADD  A, B                   ; A = tid*80
+1045 1554 LDW  B, #$4000
+1049 1555 ADD  A, B                   ; A = TCBアドレス
+104b 1556 MOV  X, A
+104d 1564 LDW  A, [X]                 ; state取得
+104f 1565 CMPI A, #5                  ; TASK_WAIT_IPC?
+1053 1566 BNE  _wake_stor_no_state_change
+1056 1567 LDW  A, #1
+105a 1568 STW  A, [X]                 ; TASK_READY
+105c 1574 RET
+1100 1598 DI
+1101 1601 STW  X, [SLP_WK_DSP]
+1105 1602 STW  X, [MISC_WK_X]
+1109 1603 MOV  X, SP
+110b 1604 LDW  A, [X]
+110d 1605 STW  A, [SLP_WK_PC]
+1111 1606 LDW  X, [MISC_WK_X]
+1115 1609 LDW  A, [CUR_TASK]
+1119 1610 STW  A, [L1_WK_TMP]
+111d 1611 LDW  B, #6
+1121 1612 SHL  A, B
+1123 1613 STW  A, [L1_WK_C]
+1127 1614 LDW  A, [L1_WK_TMP]
+112b 1615 LDW  B, #4
+112f 1616 SHL  A, B
+1131 1617 LDW  B, [L1_WK_C]
+1135 1618 ADD  A, B
+1137 1619 LDW  B, #$4000
+113b 1620 ADD  A, B
+113d 1621 MOV  X, A
+113f 1624 LDW  A, [SLP_WK_PC]
+1143 1625 STW  A, [X + #2]
+1147 1626 MOV  A, SP
+1149 1627 ADDI A, #2
+114d 1628 STW  A, [X + #4]
+1151 1629 LDW  A, [SLP_WK_DSP]
+1155 1630 STW  A, [X + #6]
+1159 1631 LDW  A, #$80
+115d 1632 STW  A, [X + #12]
+1161 1633 LDW  A, #5                  ; ★ 5=TASK_WAIT_IPC (TASK_SLEEPの3=SLEEPINGとの差分)
+1165 1634 STW  A, [X]
+1167 1637 LDW  A, #$477E              ; v0.12.3: $FBCE→$477E (KERN_SP_TOP)
+116b 1638 MOV  SP, A
+116d 1641 JMP  _sched_common
+1200 1668 LDW  A, [UART_WAIT_TID]
+1204 1669 BEQ  _wake_done             ; 0なら待機者なし
+1207 1672 STW  A, [L1_WK_TMP]        ; tid退避
+120b 1673 LDW  B, #6
+120f 1674 SHL  A, B                   ; A = tid*64
+1211 1675 STW  A, [L1_WK_C]          ; tid*64退避
+1215 1676 LDW  A, [L1_WK_TMP]        ; tid復元
+1219 1677 LDW  B, #4
+121d 1678 SHL  A, B                   ; A = tid*16
+121f 1679 LDW  B, [L1_WK_C]          ; B = tid*64
+1223 1680 ADD  A, B                   ; A = tid*80
+1225 1681 LDW  B, #$4000
+1229 1682 ADD  A, B                   ; A = TCBアドレス
+122b 1683 STW  A, [IPC4_WK_SRCTCB]   ; IPC4_REPLYと同じワーク変数を流用
+122f 1684 MOV  X, A                   ; X = TCBアドレス
+1231 1687 JSR  rx_pop                 ; A = byte (下位8bit)
+1234 1688 STW  A, [X + #16]           ; TCB+16 = ipc_msg[0] = byte
+1238 1689 LDW  A, #0
+123c 1690 STW  A, [X + #18]           ; TCB+18 = ipc_msg[1] = 0
+1240 1691 STW  A, [X + #20]           ; TCB+20 = ipc_msg[2] = 0
+1244 1692 STW  A, [X + #22]           ; TCB+22 = ipc_msg[3] = 0
+1248 1695 LDW  A, #1
+124c 1696 STW  A, [X + #24]           ; TCB+24 = ipc_valid
+1250 1699 LDW  A, [CUR_TASK]
+1254 1700 STW  A, [X + #26]           ; TCB+26 = ipc_sender
+1258 1703 LDW  A, [X]                 ; state取得
+125a 1704 CMPI A, #6                  ; TASK_WAIT_REPLY?
+125e 1705 BNE  _wake_no_state_change
+1261 1706 LDW  A, #1
+1265 1707 STW  A, [X]                 ; TASK_READY
+1267 1711 LDW  A, #0
+126b 1712 STW  A, [UART_WAIT_TID]
+126f 1715 RET
+1270 1726 LDW  X, [UART_RX_TAIL]     ; X = TAIL (インデックス)
+1274 1727 LDW  A, #$FC46              ; UART_RX_RING_BUF v0.12.0: $F020→$FC46
+1278 1728 ADD  A, X                   ; A = &buf[TAIL]
+127a 1729 MOV  X, A                   ; X = &buf[TAIL]
+127c 1730 LDB  A, [X]                 ; A = buf[TAIL]
+127e 1731 ANDI A, #$00FF              ; 下位8bitのみ
+1282 1734 MOV  B, X                   ; B = TAIL (インデックス)
+1284 1735 ADDI B, #1
+1288 1736 ANDI B, #$000F              ; TAIL = (TAIL+1) mod 16
+128c 1737 STW  B, [UART_RX_TAIL]
+1290 1740 LDW  B, [UART_RX_COUNT]
+1294 1741 SUBI B, #1
+1298 1742 STW  B, [UART_RX_COUNT]
+129c 1744 RET
+12c0 1757 LDW  A, [CUR_TASK]
+12c4 1758 STW  A, [L1_WK_TMP]
+12c8 1759 LDW  B, #6
+12cc 1760 SHL  A, B
+12ce 1761 STW  A, [L1_WK_C]
+12d2 1762 LDW  A, [L1_WK_TMP]
+12d6 1763 LDW  B, #4
+12da 1764 SHL  A, B
+12dc 1765 LDW  B, [L1_WK_C]
+12e0 1766 ADD  A, B
+12e2 1767 LDW  B, #$4000
+12e6 1768 ADD  A, B
+12e8 1769 STW  A, [IPC4_WK_SRCTCB]
+12ec 1770 MOV  X, A
+12ee 1771 RET
+1300 1788 LDW  A, #0                  ; i = 0
+1304 1790 CMPI A, #32                 ; i < POOL_SIZE?
+1308 1791 BGE  _init_pool_done
+130b 1792 STW  A, [L1_WK_TMP]        ; i 退避
+130f 1795 LDW  B, #4
+1313 1796 SHL  A, B                   ; A = i × 16
+1315 1797 LDW  B, #$4500              ; MSG_POOL_BASE
+1319 1798 ADD  A, B                   ; A = &MsgPool[i]
+131b 1799 STW  A, [L1_WK_A]          ; entry_addr 退避
+131f 1800 MOV  X, A
+1321 1803 LDW  A, #0
+1325 1804 STW  A, [X + #0]            ; sender = 0
+1329 1805 STW  A, [X + #2]            ; msg[0] = 0
+132d 1806 STW  A, [X + #4]            ; msg[1] = 0
+1331 1807 STW  A, [X + #6]            ; msg[2] = 0
+1335 1808 STW  A, [X + #8]            ; msg[3] = 0
+1339 1809 STW  A, [X + #12]           ; _pad[0] = 0
+133d 1810 STW  A, [X + #14]           ; _pad[1] = 0
+1341 1813 LDW  A, [L1_WK_TMP]        ; A = i
+1345 1814 ADDI A, #1                  ; A = i+1
+1349 1815 CMPI A, #32                 ; i+1 == POOL_SIZE?
+134d 1816 BNE  _init_pool_setnext
+1350 1817 LDW  A, #$FFFF              ; IDX_NIL（最終エントリ）
+1354 1819 LDW  X, [L1_WK_A]          ; X = entry_addr
+1358 1820 STW  A, [X + #10]           ; entry.next = i+1 or IDX_NIL
+135c 1822 LDW  A, [L1_WK_TMP]        ; A = i
+1360 1823 ADDI A, #1                  ; i++
+1364 1824 JMP  _init_pool_loop
+1367 1828 LDW  A, #0
+136b 1829 STW  A, [MSG_POOL_FREE]
+136f 1830 RET
+1370 1851 LDW  A, [MSG_POOL_FREE]     ; idx = MSG_POOL_FREE
+1374 1852 CMPI A, #$FFFF              ; idx == IDX_NIL?
+1378 1853 BNE  _enq_got_slot
+137b 1855 LDW  A, #$FFFE              ; ERR_IPC_NOSLOT
+137f 1856 RET
+1380 1859 STW  A, [IPC4_WK_IDX]      ; idx 退避
+1384 1862 LDW  B, #4
+1388 1863 SHL  A, B                   ; A = idx × 16
+138a 1864 LDW  B, #$4500              ; MSG_POOL_BASE
+138e 1865 ADD  A, B                   ; A = &MsgPool[idx]
+1390 1866 STW  A, [L1_WK_A]          ; entry_addr 退避
+1394 1867 MOV  X, A
+1396 1870 LDW  A, [X + #10]           ; A = entry.next
+139a 1871 STW  A, [MSG_POOL_FREE]
+139e 1874 LDW  A, [CUR_TASK]
+13a2 1875 STW  A, [X + #0]            ; sender = CUR_TASK
+13a6 1881 LDW  X, [IPC4_WK_X]        ; X = DSP（msg0 先頭）
+13aa 1882 LDW  A, [X]                 ; msg0
+13ac 1883 LDW  X, [L1_WK_A]
+13b0 1884 STW  A, [X + #2]            ; entry.msg[0] = msg0
+13b4 1886 LDW  X, [IPC4_WK_X]
+13b8 1887 LDW  A, [X + #2]            ; msg1
+13bc 1888 LDW  X, [L1_WK_A]
+13c0 1889 STW  A, [X + #4]            ; entry.msg[1] = msg1
+13c4 1891 LDW  X, [IPC4_WK_X]
+13c8 1892 LDW  A, [X + #4]            ; msg2
+13cc 1893 LDW  X, [L1_WK_A]
+13d0 1894 STW  A, [X + #6]            ; entry.msg[2] = msg2
+13d4 1896 LDW  X, [IPC4_WK_X]
+13d8 1897 LDW  A, [X + #6]            ; msg3
+13dc 1898 LDW  X, [L1_WK_A]
+13e0 1899 STW  A, [X + #8]            ; entry.msg[3] = msg3
+13e4 1901 LDW  A, #$FFFF              ; IDX_NIL
+13e8 1902 STW  A, [X + #10]           ; entry.next = IDX_NIL（末尾になる）
+13ec 1906 LDW  A, [IPC4_WK_DST]      ; A = dst_tid
+13f0 1907 STW  A, [L1_WK_TMP]
+13f4 1908 LDW  B, #6
+13f8 1909 SHL  A, B                   ; A = tid*64
+13fa 1910 STW  A, [L1_WK_C]
+13fe 1911 LDW  A, [L1_WK_TMP]
+1402 1912 LDW  B, #4
+1406 1913 SHL  A, B                   ; A = tid*16
+1408 1914 LDW  B, [L1_WK_C]
+140c 1915 ADD  A, B                   ; A = tid*80
+140e 1916 LDW  B, #$4000
+1412 1917 ADD  A, B                   ; A = &TCB[dst_tid]
+1414 1918 STW  A, [IPC4_WK_SRCTCB]  ; ここではdst_tcbを保管（変数名は使い回し）
+1418 1919 MOV  X, A                   ; X = dst_tcb
+141a 1921 LDW  A, [X + #30]           ; A = dst_tcb.ipc_queue_head
+141e 1922 CMPI A, #$FFFF              ; head == IDX_NIL（キュー空）?
+1422 1923 BNE  _enq_notempty
+1425 1926 LDW  A, [IPC4_WK_IDX]
+1429 1927 STW  A, [X + #30]           ; ipc_queue_head = idx
+142d 1928 STW  A, [X + #14]           ; ipc_queue_tail = idx
+1431 1929 JMP  _enq_queued
+1434 1933 LDW  A, [X + #14]           ; A = old_tail_idx
+1438 1934 STW  A, [L1_WK_TMP]        ; old_tail_idx 退避
+143c 1937 LDW  B, #4
+1440 1938 SHL  A, B                   ; A = old_tail_idx × 16
+1442 1939 LDW  B, #$4500
+1446 1940 ADD  A, B                   ; A = &MsgPool[old_tail]
+1448 1941 MOV  X, A
+144a 1942 LDW  A, [IPC4_WK_IDX]
+144e 1943 STW  A, [X + #10]           ; MsgPool[old_tail].next = idx
+1452 1946 LDW  X, [IPC4_WK_SRCTCB]
+1456 1947 LDW  A, [IPC4_WK_IDX]
+145a 1948 STW  A, [X + #14]           ; ipc_queue_tail = idx
+145e 1952 LDW  X, [IPC4_WK_SRCTCB]
+1462 1953 LDW  A, [X]                 ; dst_tcb.state
+1464 1954 CMPI A, #5                  ; TASK_WAIT_IPC?
+1468 1955 BNE  _enq_done
+146b 1956 LDW  A, #1
+146f 1957 STW  A, [X]                 ; dst_tcb.state = READY
+1471 1960 LDW  A, #0                  ; OK
+1475 1961 RET

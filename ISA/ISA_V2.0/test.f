@@ -1,0 +1,2 @@
+: SQUARE DUP MUL ;
+5 SQUARE .

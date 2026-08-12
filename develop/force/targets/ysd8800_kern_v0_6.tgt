@@ -1,0 +1,69 @@
+# force/targets/ysd8800_kern.tgt
+# YSD8800 ISA2.3 ターゲット設定（カーネル結合用）
+# Force Forth Cross Compiler v1.5 以降
+#
+# === 依存設計書（KY19対応：同期改版必須） ===
+#   - yuios_memmap_design_v1_6.md (Force ランタイム領域 $47B0-$47B5・IRQ_WK_B $47B6 を §3.5 で登録)
+#   - force_memory_contract_v1_2.md (Force コンパイラ メモリ使用契約書)
+#   ※ 上記設計書を改版した際は本ファイルのコメントおよびアドレスを同期改版すること。
+#
+# === 改版履歴 ===
+# v0.5 (2026-06-02): memmap v1.6 / contract v1.2 対応
+#   - 改版理由: コンテキストスイッチ A/Bレジスタ復元漏れ修正(kernel v0.12.7)に伴い
+#               $47B6 を IRQ_WK_B(カーネル占有・B退避用)として確保。
+#   - メモリマップコメントの $47B6 を占有化、残余予約を $47B8-$47BF(8B) へ縮小
+#   - 依存設計書を memmap v1.6 / contract v1.2 へ更新 (KY19 同期)
+#
+# v0.4 (2026-05-26): memmap v1.4 対応
+#   - 改版理由: Force v1.5 で _FMUL_A/B/R が $47B0-$47B5 に移動
+#               (memmap v1.4 §3.5 で正式登録、HANDOVER_CHAT33 真因②対策)
+#   - メモリマップコメントを v1.4 へ更新
+#   - 依存設計書バージョン明示を追加（KY19 対応）
+#
+# v0.3 (2026-05-21): YUI OS Ph.4 対応
+#   CODE-START $4400 → $5100
+#   理由: memmap v1.3 にてカーネル成長予約を $4800-$50FF(2304B) へ拡張、
+#         Forth ゾーン先頭を $5000 → $5100 へ繰り下げ。
+#         FileMgr 専用領域 $4800-$505F(2144B) と物理分離するため。
+#         前チャット (HANDOVER_CHAT26 地雷 💣2) で確定。
+#
+# v0.2: ISA2.3 v2.2.1メモリマップ対応
+#       CODE-START $4400（TCBプール$4000-$41FF・ワーク変数$4200-$423Fの後）
+#       DATA-START $C000（Dictionary $4000-$EFFFの中間）
+#       ASSEMBLER hasm23（ISA2.3対応）
+#
+# === ISA2.3メモリマップ（memmap v1.6 対応）===
+#   $0000-$07FF  Forthカーネル本体 (ROM) <- kernel.asm配置
+#   $4000-$44FF  TCBプール (RAM, 16タスク×80B)
+#   $4500-$46FF  MsgPool他カーネルワーク
+#   $4700-$477F  KERN_SP専用スタック
+#   $4780-$47AF  frequently used カーネルワーク (既存使用済)
+#   $47B0-$47B5  ★Force ランタイムワーク領域 (_FMUL_A/B/R) [memmap v1.6 §3.5]
+#   $47B6        ★カーネル占有 (IRQ_WK_B・コンテキストスイッチ B 退避) ← Force 使用禁止
+#   $47B8-$47BF  予約 (8B、Force 拡張用 §4.2 第1候補)
+#   $47C0-$47FF  reserved growth (カーネル拡張用)
+#   $4800-$505F  FileMgr専用領域 (Ph.4)
+#   $5100-$EFFF  Forth辞書 (RAM) <- CODE-START
+#   $F000-$F7FF  Forth Workspace
+#   $F800-$FBCF  タスクスタック
+#   $FC00-$FC3F  stack guard
+#   $FC40-$FC7F  OS共有変数
+#   $FC80-$FFFF  MMIO
+
+ARCH            ysd8800
+CELL-SIZE       2
+ASSEMBLER       hasm23
+
+CODE-START      $5100           # Forth辞書開始 (v0.3: $4400→$5100)
+DATA-START      $DC00           # VARIABLE/VALUE データ領域 (v0.6 案A: $E000→$DC00)
+
+DS-REG          X
+RS-REG          SP
+TOS-REG         A
+AUX-REG         B
+
+THREAD-MODEL    subroutine
+HEX-PREFIX      $
+DEFER-MODEL     vector
+CODE-AUTO-RET   no
+LABEL-PREFIX    WORD_

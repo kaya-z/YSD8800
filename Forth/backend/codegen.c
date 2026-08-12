@@ -453,19 +453,33 @@ static void emit_node(codegen_t *cg, ir_node_t *n) {
         break;
 
     case IR_FETCH_B:
-        fprintf(out, "    LDW  %s, [%s]\n",   tos, dsp);
-        fprintf(out, "    MOV  %s, %s\n",      aux, tos);
-        fprintf(out, "    LDB  %s, [%s]\n",   tos, aux);
-        fprintf(out, "    STW  %s, [%s]\n",   tos, dsp);
+        /* C@ ( addr -- byte )
+         * LDB/STB は [X] のみ可。{aux}(=B) をアドレスに使えないため
+         * {dsp}(=X) をRSに退避してアドレス→Xで読み出す。
+         * ISA2.3対応修正 (v0.6) */
+        fprintf(out, "    LDW  %s, [%s]\n",   tos, dsp);      /* A = addr */
+        fprintf(out, "    SUBI %s, #2\n",      rs);           /* RS push */
+        fprintf(out, "    STW  %s, [%s]\n",   dsp, rs);       /* save DSP */
+        fprintf(out, "    MOV  %s, %s\n",      dsp, tos);     /* X = addr */
+        fprintf(out, "    LDB  %s, [%s]\n",   tos, dsp);      /* A = mem8[addr] */
+        fprintf(out, "    LDW  %s, [%s]\n",   dsp, rs);       /* restore DSP */
+        fprintf(out, "    ADDI %s, #2\n",      rs);           /* RS pop */
+        fprintf(out, "    STW  %s, [%s]\n",   tos, dsp);      /* TOS = byte */
         break;
 
     case IR_STORE_B:
-        fprintf(out, "    LDW  %s, [%s]\n",   tos, dsp);      /* addr */
+        /* C! ( byte addr -- )
+         * ISA2.3対応修正 (v0.6) */
+        fprintf(out, "    LDW  %s, [%s]\n",   tos, dsp);      /* A = addr */
         fprintf(out, "    ADDI %s, #2\n",      dsp);
-        fprintf(out, "    LDW  %s, [%s]\n",   aux, dsp);      /* val */
+        fprintf(out, "    LDW  %s, [%s]\n",   aux, dsp);      /* B = byte */
         fprintf(out, "    ADDI %s, #2\n",      dsp);
-        fprintf(out, "    MOV  %s, %s\n",      tos, tos);
-        fprintf(out, "    STB  %s, [%s]\n",   aux, tos);
+        fprintf(out, "    SUBI %s, #2\n",      rs);           /* RS push */
+        fprintf(out, "    STW  %s, [%s]\n",   dsp, rs);       /* save DSP */
+        fprintf(out, "    MOV  %s, %s\n",      dsp, tos);     /* X = addr */
+        fprintf(out, "    STB  %s, [%s]\n",   aux, dsp);      /* mem8[addr] = byte */
+        fprintf(out, "    LDW  %s, [%s]\n",   dsp, rs);       /* restore DSP */
+        fprintf(out, "    ADDI %s, #2\n",      rs);           /* RS pop */
         break;
 
     case IR_RPUSH:

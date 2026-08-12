@@ -1,0 +1,2 @@
+emu23 yuios_road2.bin -it --disk disk.img
+

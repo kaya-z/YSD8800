@@ -1,0 +1,109 @@
+YSD8800 ISA2.0 メモリマップ仕様（テンプレート）
+1. 概要
+
+YSD8800 は メモリマップドI/O方式（MMIO） を採用する。
+メモリ空間とデバイスレジスタは同一アドレス空間に配置される。
+
+CPUのアドレス空間は 16bit であり、総容量は 64KiB とする。
+
+address range: 0x0000 – 0xFFFF
+2. メモリ空間構成
+2.1 標準メモリマップ
+範囲	サイズ	用途
+0x0000–0x00FF	256B	ベクタテーブル / ブート領域
+0x0100–0x7FFF	約32KB	プログラム / データRAM
+0x8000–0xBFFF	16KB	ストレージ / 外部デバイス領域
+0xC000–0xDFFF	8KB	メモリマップドI/O (MMIO)
+0xE000–0xFFFF	8KB	予約 / 将来拡張
+
+※ 実装により RAM/ROM の区別は変更可能。
+
+3. ベクタテーブル領域
+Address	内容
+0x0000	reset vector
+0x0002	irq0 vector
+0x0004	irq1 vector
+0x0006	alignment exception
+0x0008	syscall
+
+各エントリは 16bit little-endian。
+
+4. メモリマップドI/O 領域
+4.1 概要
+0xC000 – 0xDFFF
+
+この領域へのアクセスはメモリではなくデバイス操作となる。
+
+読み書きは 16bit 単位
+
+未定義アドレスアクセスは未定義動作
+
+5. 汎用デジタルI/O (DIO)
+5.1 ベースアドレス
+0xC000
+5.2 レジスタ
+Address	名称	R/W	説明
+0xC000	DIO_DATA	R/W	入出力値
+0xC002	DIO_DIR	R/W	方向 (1=output, 0=input)
+0xC004	DIO_SET	W	ビットセット
+0xC006	DIO_CLR	W	ビットクリア
+ビット定義
+
+bit0〜bit15 → GPIOピン
+
+6. UART コントローラ
+6.1 ベースアドレス
+0xC100
+6.2 レジスタ
+Address	名称	R/W	説明
+0xC100	UART_DATA	R/W	送受信データ
+0xC102	UART_STATUS	R	状態
+0xC104	UART_CTRL	R/W	制御
+0xC106	UART_BAUD	R/W	ボーレート
+STATUS ビット
+bit	意味
+0	RX ready
+1	TX ready
+2	overrun
+3	frame error
+CTRL ビット
+bit	意味
+0	enable
+1	rx irq enable
+2	tx irq enable
+7. ストレージコントローラ
+7.1 想定用途
+
+SDカード
+
+フラッシュ
+
+RAMディスク
+
+ブロックデバイス
+
+7.2 ベースアドレス
+0xC200
+7.3 レジスタ
+Address	名称	R/W	説明
+0xC200	STG_CMD	W	コマンド
+0xC202	STG_STATUS	R	状態
+0xC204	STG_LBA	R/W	ブロック番号
+0xC206	STG_BUFFER	R/W	データバッファ
+CMD
+値	意味
+1	read block
+2	write block
+STATUS
+bit	意味
+0	busy
+1	error
+2	ready
+8. 割り込み関連レジスタ（オプション）
+ベース
+0xC300
+Address	名称	R/W	説明
+0xC300	IRQ_PENDING	R	保留割り込み
+0xC302	IRQ_ENABLE	R/W	割り込みマスク
+
+※ CPU FLAGS の IE と併用。

@@ -1,0 +1,14 @@
+0000 RP
+0002 start
+000d next
+0016 rpush
+0025 rpop
+0034 enter
+003c exit
+0042 drop
+0047 dup
+0050 swap
+005b add
+0066 lit
+0071 cold_start
+0081 halt_word

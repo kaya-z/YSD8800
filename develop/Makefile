@@ -1,0 +1,239 @@
+# Makefile - YSD8800 ISA2.2 ビルドシステム
+# Version: 1.0
+#
+# ターゲット:
+#   make tools       ホストツール (hasm22, emu22, scc22, disasm22) をビルド
+#   make kernel      カーネルをアセンブル
+#   make hello_c     Cサンプルをビルド・実行
+#   make hello_fs    Forthサンプルをビルド・実行
+#   make arith       scc22回帰テスト
+#   make all         全ビルド
+#   make clean       生成ファイルを削除
+
+MODE    ?= A
+CC      = gcc
+CFLAGS  = -std=c99 -O2 -Wall
+BUILD   = build
+SAMPLES = samples
+HASM    = ./hasm22
+EMU     = ./emu22
+SCC     = ./scc22/scc22
+DISASM  = ./disasm22
+FORCE   = ./force/force
+
+.PHONY: all tools kernel hello_c hello_fs arith run_kernel clean help
+
+all: tools kernel
+
+# ---- ホストツール ----
+tools: $(HASM) $(EMU) $(SCC) $(DISASM)
+
+$(HASM): hasm22.c
+	$(CC) $(CFLAGS) $< -o $@
+	@echo "  [OK] hasm22"
+
+$(EMU): emu22.c
+	$(CC) $(CFLAGS) -Wextra $< -o $@
+	@echo "  [OK] emu22"
+
+$(SCC): scc22/scc22.c
+	$(CC) $(CFLAGS) $< -o $@
+	@echo "  [OK] scc22"
+
+$(DISASM): disasm22.c
+	$(CC) $(CFLAGS) $< -o $@
+	@echo "  [OK] disasm22"
+
+# ---- カーネル ----
+$(BUILD):
+	mkdir -p $(BUILD)
+
+kernel: $(BUILD)/kernel.bin
+
+$(BUILD)/kernel.bin: kernel.asm | $(BUILD)
+	$(HASM) kernel.asm
+	cp kernel.asm.bin $@
+	cp kernel.asm.sym $(BUILD)/kernel.sym
+	@echo "  [OK] kernel -> $@"
+
+# ---- arith 回帰テスト ----
+arith: tools | $(BUILD)
+	@mkdir -p $(BUILD)/arith
+	$(SCC) scc22/test/arith.c -o $(BUILD)/arith/arith.asm
+	$(HASM) $(BUILD)/arith/arith.asm
+	python3 scripts/make_harness.py $(BUILD)/arith/arith.asm.sym \
+		> $(BUILD)/arith/harness.asm
+	$(HASM) $(BUILD)/arith/harness.asm
+	python3 scripts/merge_simple.py \
+		$(BUILD)/arith/arith.asm.bin \
+		$(BUILD)/arith/harness.asm.bin \
+		$(BUILD)/arith/arith.bin
+	@echo "=== arith test ==="
+	$(EMU) $(BUILD)/arith/arith.bin -n 5000000
+
+# ---- Cサンプル: hello ----
+hello_c: tools $(BUILD)/kernel.bin | $(BUILD)
+	@mkdir -p $(BUILD)/hello_c
+	$(SCC) $(SAMPLES)/hello/hello.c -o $(BUILD)/hello_c/hello.asm
+	$(HASM) $(BUILD)/hello_c/hello.asm
+	python3 scripts/make_harness.py $(BUILD)/hello_c/hello.asm.sym \
+		> $(BUILD)/hello_c/harness.asm
+	$(HASM) $(BUILD)/hello_c/harness.asm
+	python3 scripts/merge_simple.py \
+		$(BUILD)/hello_c/hello.asm.bin \
+		$(BUILD)/hello_c/harness.asm.bin \
+		$(BUILD)/hello_c/hello.bin
+	@echo "=== hello_c ==="
+	$(EMU) $(BUILD)/hello_c/hello.bin -n 500000
+
+# ---- Forthサンプル: hello ----
+hello_fs: tools | $(BUILD)
+	@mkdir -p $(BUILD)/hello_fs
+	cd force && ./force ../$(SAMPLES)/hello/hello.fs -o ../$(BUILD)/hello_fs/hello.asm
+	$(HASM) $(BUILD)/hello_fs/hello.asm
+	python3 scripts/make_harness.py $(BUILD)/hello_fs/hello.asm.sym \
+		> $(BUILD)/hello_fs/harness.asm
+	$(HASM) $(BUILD)/hello_fs/harness.asm
+	python3 scripts/merge_simple.py \
+		$(BUILD)/hello_fs/hello.asm.bin \
+		$(BUILD)/hello_fs/harness.asm.bin \
+		$(BUILD)/hello_fs/hello.bin
+	@echo "=== hello_fs ==="
+	$(EMU) $(BUILD)/hello_fs/hello.bin -n 500000
+
+# ---- カーネル単体 ----
+run_kernel: $(BUILD)/kernel.bin
+	$(EMU) $(BUILD)/kernel.bin -n 200000
+
+# ---- クリーン ----
+clean:
+	rm -rf $(BUILD)
+	rm -f *.bin *.sym *.dbg
+	rm -f scc22/test/*.bin scc22/test/*.sym
+
+help:
+	@echo "YSD8800 ISA2.2 Build System v1.0"
+	@echo ""
+	@echo "  make tools      Build host tools"
+	@echo "  make kernel     Assemble kernel"
+	@echo "  make arith      scc22 regression test"
+	@echo "  make hello_c    C hello world"
+	@echo "  make hello_fs   Forth hello world"
+	@echo "  make all        tools + kernel"
+	@echo "  make clean      Remove artifacts"
+
+# ============================================================
+# counter サンプル
+# ============================================================
+counter_c: tools | $(BUILD)
+	@mkdir -p $(BUILD)/counter_c
+	$(SCC) $(SAMPLES)/counter/counter.c -o $(BUILD)/counter_c/counter.asm
+	$(HASM) $(BUILD)/counter_c/counter.asm
+	python3 scripts/make_harness.py $(BUILD)/counter_c/counter.asm.sym \
+		> $(BUILD)/counter_c/harness.asm
+	$(HASM) $(BUILD)/counter_c/harness.asm
+	python3 scripts/merge_simple.py \
+		$(BUILD)/counter_c/counter.asm.bin \
+		$(BUILD)/counter_c/harness.asm.bin \
+		$(BUILD)/counter_c/counter.bin
+	@echo "=== counter_c ==="
+	echo 's 500000\nq' | $(EMU) $(BUILD)/counter_c/counter.bin
+
+counter_fs: tools | $(BUILD)
+	@mkdir -p $(BUILD)/counter_fs
+	cd force && ./force ../$(SAMPLES)/counter/counter.fs \
+		-o ../$(BUILD)/counter_fs/counter.asm
+	$(HASM) $(BUILD)/counter_fs/counter.asm
+	python3 scripts/make_harness.py $(BUILD)/counter_fs/counter.asm.sym \
+		> $(BUILD)/counter_fs/harness.asm
+	$(HASM) $(BUILD)/counter_fs/harness.asm
+	python3 scripts/merge_simple.py \
+		$(BUILD)/counter_fs/counter.asm.bin \
+		$(BUILD)/counter_fs/harness.asm.bin \
+		$(BUILD)/counter_fs/counter.bin
+	@echo "=== counter_fs ==="
+	echo 's 500000\nq' | $(EMU) $(BUILD)/counter_fs/counter.bin
+
+# ============================================================
+# fibonacci サンプル
+# ============================================================
+fibonacci: tools | $(BUILD)
+	@mkdir -p $(BUILD)/fibonacci
+	$(SCC) $(SAMPLES)/fibonacci/fibonacci.c -o $(BUILD)/fibonacci/fib.asm
+	$(HASM) $(BUILD)/fibonacci/fib.asm
+	python3 scripts/make_harness.py $(BUILD)/fibonacci/fib.asm.sym \
+		> $(BUILD)/fibonacci/harness.asm
+	$(HASM) $(BUILD)/fibonacci/harness.asm
+	python3 scripts/merge_simple.py \
+		$(BUILD)/fibonacci/fib.asm.bin \
+		$(BUILD)/fibonacci/harness.asm.bin \
+		$(BUILD)/fibonacci/fib.bin
+	@echo "=== fibonacci ==="
+	echo 's 10000000\nq' | $(EMU) $(BUILD)/fibonacci/fib.bin
+
+# ============================================================
+# calc サンプル
+# ============================================================
+calc: tools | $(BUILD)
+	@mkdir -p $(BUILD)/calc
+	$(SCC) $(SAMPLES)/calc/calc.c -o $(BUILD)/calc/calc.asm
+	$(HASM) $(BUILD)/calc/calc.asm
+	python3 scripts/make_harness.py $(BUILD)/calc/calc.asm.sym \
+		> $(BUILD)/calc/harness.asm
+	$(HASM) $(BUILD)/calc/harness.asm
+	python3 scripts/merge_simple.py \
+		$(BUILD)/calc/calc.asm.bin \
+		$(BUILD)/calc/harness.asm.bin \
+		$(BUILD)/calc/calc.bin
+	@echo "=== calc ==="
+	echo 's 5000000\nq' | $(EMU) $(BUILD)/calc/calc.bin
+
+# ============================================================
+# 全サンプル
+# ============================================================
+samples: hello_c hello_fs counter_c counter_fs fibonacci calc task_demo
+	@echo "=== All samples built ==="
+
+# ============================================================
+# task_demo - マルチタスクデモ (Forth + カーネル)
+# ============================================================
+task_demo: tools $(BUILD)/kernel.bin | $(BUILD)
+	@mkdir -p $(BUILD)/task_demo
+	cd force && ./force --target ysd8800_kern \
+		--prim-file targets/ysd8800.prim \
+		../$(SAMPLES)/task_demo/task_demo.fs \
+		-o ../$(BUILD)/task_demo/task_demo.asm
+	$(HASM) $(BUILD)/task_demo/task_demo.asm
+	python3 scripts/make_task_patch.py \
+		$(BUILD)/task_demo/task_demo.asm.sym \
+		$(BUILD)/task_demo/task_patch.asm
+	$(HASM) $(BUILD)/task_demo/task_patch.asm
+	python3 scripts/merge_kern.py \
+		$(BUILD)/kernel.bin \
+		$(BUILD)/task_demo/task_demo.asm.bin \
+		$(BUILD)/task_demo/task_patch.asm.bin \
+		$(BUILD)/task_demo/task_demo.bin
+	@echo "=== task_demo ==="
+	$(EMU) $(BUILD)/task_demo/task_demo.bin -q
+
+task_demo_v2: tools $(BUILD)/kernel.bin | $(BUILD)
+	@mkdir -p $(BUILD)/task_demo_v2
+	cat kernel_forth.fs \
+	    $(SAMPLES)/task_demo/task_demo_v2.fs \
+	    > $(BUILD)/task_demo_v2/combined.fs
+	cd force && ./force --target ysd8800_kern \
+		--prim-file targets/ysd8800.prim \
+		../$(BUILD)/task_demo_v2/combined.fs \
+		-o ../$(BUILD)/task_demo_v2/task_demo_v2.asm
+	$(HASM) $(BUILD)/task_demo_v2/task_demo_v2.asm
+	python3 scripts/make_task_patch.py \
+		$(BUILD)/task_demo_v2/task_demo_v2.asm.sym \
+		$(BUILD)/task_demo_v2/task_patch.asm
+	$(HASM) $(BUILD)/task_demo_v2/task_patch.asm
+	python3 scripts/merge_kern.py \
+		$(BUILD)/kernel.bin \
+		$(BUILD)/task_demo_v2/task_demo_v2.asm.bin \
+		$(BUILD)/task_demo_v2/task_patch.asm.bin \
+		$(BUILD)/task_demo_v2/task_demo_v2.bin
+	@echo "=== task_demo_v2 ==="
+	$(EMU) $(BUILD)/task_demo_v2/task_demo_v2.bin -q

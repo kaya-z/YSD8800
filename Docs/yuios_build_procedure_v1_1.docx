@@ -1,0 +1,395 @@
+**YUI OS ビルド手順書**  v1.1 / 2026-05-18
+
+**YUI OS ビルド手順書**
+
+yuios_build_procedure_v1_1.docx
+
+Version 1.1 / 2026-05-18
+
+| **項目** | **内容** |
+| --- | --- |
+| 文書種別 | YUI OS ビルド手順書 |
+| バージョン | v1.1 |
+| 作成日 | 2026-04-29 |
+| 対象 ISA | ISA2.3 (YSD8800) |
+| 対象ツール | scc23 / hasm23 / lnk23 / emu23 / Force v1.2 / disasm23 |
+| 対象 OS | YUI OS Ph.2 (kernel_v09 + kernel_forth_v05) |
+| 作成者 | Claude (Anthropic) |
+
+# **改版履歴**
+
+| **版数** | **日付** | **内容** | **作成者** |
+| --- | --- | --- | --- |
+| v1.0 | 2026-04-29 | 初版作成: Chat #18 で確立したビルド手順を集約 | Claude |
+| v1.1 | 2026-05-18 | §4.5 をシンボルアドレスハードコード禁止原則として強化（kaizen 原則31 対応）。§6.6 に全件抽出コマンド追記。§10 将来課題 No.3 を更新。 | Claude |
+
+# **目次**
+
+# **1. 概要**
+
+## **1.1 目的**
+
+本書は YUI OS および関連 C プログラム（Dhrystone 等）を YSD8800 ツールチェーンを使用してビルドするための手順を記述する。
+
+従来、ビルド手順は複数の引継ぎ文書（HANDOVER_CHAT15/17/18 等）に散在し、暗黙知に依存していた。本書はそれらを一元化し、再現性のある手順を提供することを目的とする。
+
+## **1.2 対象範囲**
+
+本書が対象とするビルドは以下のとおり：
+
+- YUI OS Ph.2（Forth カーネル + ASM カーネル）
+
+- C プログラム（Dhrystone タイマー版を例として使用）
+
+- ツールチェーン自体のビルド（scc23 / hasm23 / lnk23 / emu23 / Force）
+
+## **1.3 前提環境**
+
+| **項目** | **要件** |
+| --- | --- |
+| OS | Linux (Ubuntu 20.04 以降推奨) |
+| コンパイラ | gcc 9.0 以上（-std=c99 対応） |
+| シェル | bash 4.0 以上 |
+| ツール | sed, awk, grep, od |
+
+# **2. ツールチェーン要件**
+
+## **2.1 必須ツール一覧（バージョン込み）**
+
+| **ツール名** | **バージョン** | **役割** | **ソースファイル** |
+| --- | --- | --- | --- |
+| scc23 | v1.00 | C コンパイラ（ISA2.3対応） | scc23_v1_00.c |
+| hasm23 | v1.01 | アセンブラ（ISA2.3対応） | hasm23.c |
+| lnk23 | v2.00 | リンカ（lds スクリプト対応） | lnk23.c |
+| emu23 | v1.02 | エミュレータ（UART/Timer/MMU統合） | emu23_v102.c |
+| Force | v1.2 | Forth クロスコンパイラ | force.c 他 |
+| disasm23 | v1.00 | 逆アセンブラ（デバッグ用） | disasm23.c |
+
+## **2.2 ビルド環境**
+
+以下のファイルがビルドディレクトリに揃っていること：
+
+| **ファイル** | **用途** |
+| --- | --- |
+| scc23_v1_00.c | C コンパイラソース |
+| hasm23.c | アセンブラソース |
+| lnk23.c | リンカソース |
+| emu23_v102.c | エミュレータソース |
+| force.c | Force メインソース |
+| ir.c / ir.h | Force IR モジュール |
+| lexer.c / lexer.h | Force レキサモジュール |
+| parser.c / parser.h | Force パーサモジュール |
+| codegen.c / codegen.h | Force コードジェネレータ |
+| ysd8800.prim | Force プリミティブ定義 |
+| ysd8800.tgt | Force ターゲット定義（ユーザプログラム用） |
+| ysd8800_kern.tgt | Force ターゲット定義（OS カーネル用） |
+
+## **2.3 ファイル配置構成**
+
+Force コンパイラは frontend/ / backend/ / targets/ サブディレクトリ構成を要求する。プロジェクトナレッジからビルドする場合は以下の構造を作成する：
+
+| build/ ├── force/ │   ├── force.c │   ├── frontend/ │   │   ├── ir.c / ir.h │   │   ├── lexer.c / lexer.h │   │   └── parser.c / parser.h │   ├── backend/ │   │   └── codegen.c / codegen.h │   └── targets/ │       ├── ysd8800.prim │       ├── ysd8800.tgt │       └── ysd8800_kern.tgt ├── scc23 ├── hasm23 ├── lnk23 └── emu23 |
+| --- |
+
+# **3. ツールビルド手順**
+
+## **3.1 Force コンパイラビルド**
+
+プロジェクトナレッジからソースを収集し、ビルドツリーを構築する：
+
+| # ビルドツリー作成 mkdir -p build/force/frontend build/force/backend build/force/targets cd build/force # ソースコピー (プロジェクトナレッジからのパス例) cp /mnt/project/ir.{c,h} /mnt/project/lexer.{c,h} /mnt/project/parser.{c,h} frontend/ cp /mnt/project/codegen.{c,h} backend/ cp /mnt/project/force.c . cp /mnt/project/ysd8800.prim /mnt/project/ysd8800.tgt /mnt/project/ysd8800_kern.tgt targets/ # コンパイル gcc -std=c99 -O2 -Wall -Wno-unused-function -Wno-format-truncation \     frontend/ir.c frontend/lexer.c frontend/parser.c \     backend/codegen.c force.c -o force # バージョン確認 ./force -v   # → Force v1.2 |
+| --- |
+
+## **3.2 scc23 ビルド**
+
+| gcc -std=c99 -O2 -Wall scc23_v1_00.c -o scc23 ./scc23 -v   # → scc23 v1.00 (2026-04-16) for YSD8800 ISA2.3 |
+| --- |
+
+## **3.3 hasm23 ビルド**
+
+| gcc -std=c99 -O2 -Wall hasm23.c -o hasm23 ./hasm23 -v  # → hasm23 v1.01 |
+| --- |
+
+## **3.4 lnk23 ビルド**
+
+| gcc -std=c99 -O2 -Wall lnk23.c -o lnk23 ./lnk23 -v  # → lnk23 v2.00 |
+| --- |
+
+## **3.5 emu23 ビルド**
+
+| gcc -std=c99 -O2 -Wall -Wno-unused-function emu23_v102.c -o emu23 -lm ./emu23 -v  # → emu23 v1.02 |
+| --- |
+
+## **3.6 ビルド成功確認**
+
+全ツールのバージョン表示を確認する：
+
+| for tool in ./force ./scc23 ./hasm23 ./lnk23 ./emu23; do     echo -n "$tool: "; $tool -v 2>&1 │ head -1 done |
+| --- |
+
+期待される出力：
+
+| ./force: Force v1.2 ./scc23: scc23 v1.00 (2026-04-16) for YSD8800 ISA2.3 ./hasm23: hasm23 v1.01 (2026-04-22) for YSD8800 ISA2.3 ./lnk23: lnk23 v2.00 ./emu23: emu23 v1.02 |
+| --- |
+
+# **4. YUI OS Ph.2 ビルド手順**
+
+## **4.1 ビルド全体フロー**
+
+YUI OS Ph.2 のビルドは以下の流れで行う：
+
+| [kernel_forth_v05.fs]        │        │ Force コンパイル (--target ysd8800_kern)        v [kernel_forth_v05.asm]  ← 混入行あり (#WORD_xxx 形式)        │        │ sed による混入行修正        v [kernel_forth_v05.asm]  ← 修正済み ($addr 直書き形式)        │        │ hasm23 アセンブル        v [kernel_forth_v05.asm.bin] + [kernel_forth_v05.asm.sym] [kernel_v09.asm]        │        │ hasm23 アセンブル        v [kernel_v09.asm.bin] + [kernel_v09.asm.sym]        │ lnk23 (yuios.lds スクリプト)        │   SECTION forth 先 → SECTION kernel 後 (後勝ちルール)        v [yuios_v09.bin] + [yuios_v09.sym] |
+| --- |
+
+## **4.2 Step 1: Force による Forth カーネルコンパイル**
+
+Force コンパイラで Forth ソースを YSD8800 アセンブリに変換する：
+
+| ./force --target ysd8800_kern \         --tgt-file targets/ysd8800_kern.tgt \         --prim-file targets/ysd8800.prim \         kernel_forth_v05.fs -o kernel_forth_v05.asm |
+| --- |
+
+| **【重要】--tgt-file の指定** --tgt-file には必ず targets/ysd8800_kern.tgt を指定すること。 デフォルトの targets/ysd8800.tgt を使用すると配置設定が変わり、 kernel_v09.asm との整合が取れなくなる。 |
+| --- |
+
+## **4.3 Step 2: 混入行修正（必須）**
+
+Force v1.2 が出力する ASM には、hasm23 が正しく解釈できない行が含まれる：
+
+| # 問題のある行（例） LDW  A, #WORD_MEMMGR_TASK |
+| --- |
+
+hasm23 はこれを「# で始まるラベル参照」として扱い、バイナリに 0 を出力する（エラーではなく警告レベル）。これにより WORD_MEMMGR_TASK の起動アドレスが 0 になって暴走する。
+
+sed で該当アドレスを直書きに変換する：
+
+| # シンボルアドレスを取得 addr=$(grep -E '^[0-9a-f]+ WORD_MEMMGR_TASK$' kernel_forth_v05.asm.sym \        │ awk '{print $1}') # sed で直書きに変換 sed -i "s│LDW  A, #WORD_MEMMGR_TASK│LDW  A, #\$$addr│g" kernel_forth_v05.asm |
+| --- |
+
+| **【注意】混入行の確認** 混入行のパターンは Force のバージョンや Forth ソースの変更で増える可能性がある。 以下のコマンドで全混入箇所を事前に確認すること：     grep -E 'LDW\s+\w+,\s+#WORD_' kernel_forth_v05.asm |
+| --- |
+
+## **4.4 Step 3: hasm23 によるアセンブル**
+
+| # Forth カーネルアセンブル ./hasm23 kernel_forth_v05.asm # → kernel_forth_v05.asm.bin, kernel_forth_v05.asm.sym # ASM カーネルアセンブル ./hasm23 kernel_v09.asm # → kernel_v09.asm.bin, kernel_v09.asm.sym |
+| --- |
+
+## **4.5 Step 4: シンボルアドレス整合確認【v1.1 強化】**
+
+**【原則】カーネル側コード（kernel_core.asm 等）への Forth シンボルアドレスのハードコードは禁止する。**（kaizen 原則31）
+
+Forth ソースのリネーム・ワード追加・削除でアドレスが変化した場合、ハードコードされた即値はエラーなく静かに腐る。必ずビルドごとに symファイルから動的に取得して検証すること。
+
+**【禁止パターン】**
+
+| ; BAD: アドレスを数値で直書き LDW A, #$CE7F      ← Forthソース変更で即座に腐る |
+| --- |
+
+**【許容パターン】ビルドスクリプトで sym から動的取得して sed 置換（§7.1 参照）**
+
+| # kernel_core.asm の全ハードコードアドレスを機械的に全件抽出する grep -En '\$[0-9A-Fa-f]{4}' kernel_core.asm | grep -v 'EQU\|;' grep -En 'WORD_' kernel_core.asm |
+| --- |
+
+| # Forth bin の実シンボルアドレス確認 grep -E 'WORD_MEMMGR_TASK|WORD_MEM_TEST_TASK|WORD_OS_START' kernel_forth.asm.sym # kernel_core.asm の参照アドレスと照合し、不一致の場合は sed で更新 addr=$(grep -E '^[0-9a-f]+ WORD_MEMMGR_TASK$' kernel_forth.asm.sym | awk '{print $1}') sed -i "s/LDW A, #WORD_MEMMGR_TASK/LDW A, #\$$addr/g" kernel_core.asm |
+| --- |
+
+| **【参考】確認済みシンボルアドレス（v0.9 / v0.5.1 ベース）** WORD_MEMMGR_TASK  = $CE7F WORD_MEM_TEST_TASK = $CED4 これらの値は Forth ソース変更のたびに変化する。必ず .sym ファイルの実値で確認すること。 |
+| --- |
+
+| **【警告】hasm23 はシンボルアドレスのずれを検出しない** Forth ソースのリネームや変更でアドレスが変化しても、hasm23 はエラーを出さない。 ビルドが成功しても誤ったアドレスでカーネルが動作し、デバッグが極めて困難になる。 この確認ステップを省略しないこと。（kaizen 原則31） |
+| --- |
+
+## **4.6 Step 5: lnk23 によるリンク**
+
+lds スクリプトを作成してリンクする。SECTION の順序は forth 先、kernel 後が必須：
+
+| # yuios.lds を作成 cat > yuios.lds <<'EOF' OUTPUT yuios_v09.bin SYMOUT yuios_v09.sym SECTION forth   0x0000 kernel_forth_v05.asm.bin kernel_forth_v05.asm.sym SECTION kernel  0x0000 kernel_v09.asm.bin kernel_v09.asm.sym EOF # リンク実行 ./lnk23 yuios.lds |
+| --- |
+
+| **【重要】後勝ちルール（SECTION 順序）** lnk23 は後に記述された SECTION が先の SECTION を上書きする（後勝ち）。 kernel_forth_v05.asm.bin は .org $4400 で始まるが、0x0000-0x43FF が 0x00 padding される。 kernel を先に書くと Forth の padding がカーネルを上書きしてしまうため、 必ず「forth 先 → kernel 後」の順序とする。 |
+| --- |
+
+## **4.7 Step 6: 動作確認**
+
+| ./emu23 yuios_v09.bin yuios_v09.sym -q # 正常動作時の出力例: M28AR |
+| --- |
+
+シンボルファイルを渡すことでデバッグ情報が付加される。
+
+| **【参考】確認済みビルド成果物** ビルド成功 yuios_v09.bin サイズ: 53633 bytes シンボル数: 278 emu23 v1.02 -q 実行結果: M28AR |
+| --- |
+
+# **5. C プログラムビルド手順（Dhrystone 等）**
+
+## **5.1 ビルド全体フロー**
+
+| [dhry_timer.c]        │        │ scc23 コンパイル        v [dhry.asm]        │        │ hasm23 アセンブル        v [dhry.asm.bin] + [dhry.asm.sym] [startup_harness23_v15.asm]        │        │ sed で JSR _main → JSR $XXXX (直書き化)        v [startup_harness23.asm]        │        │ hasm23 アセンブル        v [startup_harness23.asm.bin] + [startup_harness23.asm.sym]        │ lnk23 (dhry.lds スクリプト)        v [dhry_final.bin] + [dhry_final.sym] |
+| --- |
+
+## **5.2 Step 1: scc23 によるコンパイル**
+
+| ./scc23 -o dhry.asm dhry_timer.c |
+| --- |
+
+## **5.3 Step 2: hasm23 によるアセンブル（+ _main アドレス取得）**
+
+| # まず dhry.asm をアセンブルしてシンボルを取得 ./hasm23 dhry.asm # _main アドレスを取得 main_addr=$(grep -E '^[0-9a-f]+ _main$' dhry.asm.sym │ awk '{print $1}') echo "_main address: $main_addr" |
+| --- |
+
+## **5.4 Step 3: startup_harness の JSR 直書き化**
+
+startup_harness23_v15.asm は JSR _main をシンボル参照で記述しているため、lnk23 の bin モードでは未解決エラーになる。lds スクリプトモードでも未解決のため、アドレス直書きに変換する：
+
+| cp startup_harness23_v15.asm startup_harness23.asm sed -i "s│JSR  _main│JSR  \$$main_addr│g" startup_harness23.asm ./hasm23 startup_harness23.asm |
+| --- |
+
+## **5.5 Step 4: lnk23 によるリンク**
+
+| cat > dhry.lds <<'EOF' OUTPUT dhry_final.bin SYMOUT dhry_final.sym SECTION code    0x0000 dhry.asm.bin dhry.asm.sym SECTION harness 0x0000 startup_harness23.asm.bin startup_harness23.asm.sym EOF ./lnk23 dhry.lds |
+| --- |
+
+## **5.6 Step 5: 動作確認**
+
+| ./emu23 dhry_final.bin dhry_final.sym -q # 正常動作時の出力例: # Dhrystone Benchmark  Version 2.1  (Language: C) # ... # Dhrystones per Second: 826 |
+| --- |
+
+| **【参考】確認済みビルド成果物（emu23 v1.02）** dhry_final.bin サイズ: 21838 bytes _main アドレス: $04CC シンボル数: 227 実行結果: N=10 / Dhrystones/sec=826 / P:20 |
+| --- |
+
+# **6. ビルド時の既知の落とし穴と対処**
+
+## **6.1 Force 出力の混入行（#WORD_xxx）**
+
+| **項目** | **内容** |
+| --- | --- |
+| 現象 | Force が #WORD_xxx 形式のシンボル参照を出力する |
+| 影響 | hasm23 が当該アドレスを 0 として出力（警告のみ、エラーにならない） |
+| 対処 | sed でシンボルアドレスを直書きに変換（§4.3 参照） |
+| 将来 | Force 側の修正で不要になる予定（v1.3 対応時に削除可） |
+
+## **6.2 .bin ファイルの先頭パディング問題（後勝ちルール）**
+
+| **項目** | **内容** |
+| --- | --- |
+| 現象 | hasm23 は .org 指定アドレスまでを 0x00 で padding する |
+| 具体例 | kernel_forth_v05.asm (.org $4400 始まり) → 0x0000〜0x43FF が 0x00 |
+| 影響 | SECTION 順序を誤ると kernel.bin が Forth の 0x00 padding で上書きされる |
+| 対処 | lds スクリプトは必ず「forth 先 → kernel 後」とする |
+
+## **6.3 startup_harness の JSR _main 問題**
+
+| **項目** | **内容** |
+| --- | --- |
+| 現象 | startup_harness23_v15.asm が JSR _main のシンボル参照を使用 |
+| 影響 | lnk23 lds モードでも _main が解決されずリンクエラー |
+| 対処 | sed で JSR $XXXX に直書き変換（§5.4 参照） |
+| 将来 | lnk23 のクロスセクション参照対応で解決可能 |
+
+## **6.4 hasm23 の構文制限まとめ**
+
+| **パターン** | **可否** | **代替手段** |
+| --- | --- | --- |
+| LDW A, #'H' | ❌ 不可 | LDW A, #$48 （16進直書き） |
+| LDW A, #UART_TX （EQU値） | ❌ 警告（bin は 0） | LDW A, #$FC80 （直書き） |
+| STW A, [#$5000] | ❌ # でエラー | STW A, [$5000] （# を除去） |
+| STW A, [UART_STAT] （EQU） | ✅ OK | — |
+| STW A, [SYMBOL] | ✅ OK (bin モード) | — |
+| JSR _symbol | ❌ bin モードで未解決 | JSR $XXXX か YOF -c モード |
+| YOF (-c) モードで .org backward | ❌ サポート外 | bin モードを使用 |
+
+## **6.5 lnk23 の machine モード使い分け**
+
+| **モード** | **TEXT 領域制約** | **用途** |
+| --- | --- | --- |
+| baremetal（デフォルト） | $3FFF まで | 小規模プログラム |
+| none | 制約なし | Dhrystone 等大規模 C プログラム |
+| force | Force カーネル前提 | Forth プログラム |
+
+| **【注意】lnk23 -T オプションの罠** lnk23 に -T 0x0400 を指定するとリセットベクタ ($0000-$0007) が空になる。 lds スクリプトモードを使用し、startup_harness を必ず SECTION に含めること。 |
+| --- |
+
+## **6.6 シンボルアドレスの食い違い検出【v1.1 強化】**
+
+kernel_core.asm と kernel_forth.asm.sym のシンボルアドレスが合っているか、ビルド毎に確認する。
+**Forthシンボルアドレスのハードコードは禁止（kaizen 原則31）。** 以下の手順で全件を機械的に抽出すること：
+
+| # Step 1: kernel_core.asm 内の即値アドレスを全件抽出（ハードコード検出） grep -En '\$[0-9A-Fa-f]{4}' kernel_core.asm | grep -v 'EQU\|;' grep -En 'WORD_' kernel_core.asm  # Step 2: 実際の Forth シンボルアドレスを .sym から確認 grep -E 'WORD_MEMMGR_TASK|WORD_MEM_TEST_TASK|WORD_OS_START' kernel_forth.asm.sym  # Step 3: 不一致があれば sed で置換（§4.5 参照） |
+| --- |
+
+| **【注意】ハードコード数値アドレスが残っている場合** kaizen 原則31 に従い、該当箇所を sed 置換スクリプト（§7.1）に組み込んで動的解決に変更すること。 将来的には lnk23 のクロスセクション参照対応（§10 将来課題 No.3）で根本解決予定。 |
+| --- |
+
+# **7. ビルドスクリプト例（自動化用シェル）**
+
+## **7.1 build_yuios.sh — YUI OS Ph.2 ビルド**
+
+以下のスクリプトを環境に合わせてパスを修正して使用すること。要修正箇所は # [要修正] コメントで示す。
+
+| #!/bin/bash # build_yuios.sh - YUI OS Ph.2 ビルドスクリプト # Version: 1.0 / 2026-04-29 set -e # [要修正] ツールのパス FORCE=./force HASM=./hasm23 LNK=./lnk23 EMU=./emu23 # [要修正] ソースファイルのパス FORTH_SRC=kernel_forth_v05.fs KERN_ASM=kernel_v09.asm TGT_DIR=targets echo "=== Step 1: Force コンパイル ===" $FORCE --target ysd8800_kern \        --tgt-file $TGT_DIR/ysd8800_kern.tgt \        --prim-file $TGT_DIR/ysd8800.prim \        $FORTH_SRC -o kernel_forth_v05.asm echo "=== Step 2: 混入行修正 ===" addr=$(grep -E '^[0-9a-f]+ WORD_MEMMGR_TASK$' kernel_forth_v05.asm.sym \        │ awk '{print $1}') if [ -z "$addr" ]; then     echo "ERROR: WORD_MEMMGR_TASK not found in .sym"; exit 1 fi sed -i "s│LDW  A, #WORD_MEMMGR_TASK│LDW  A, #\$$addr│g" kernel_forth_v05.asm echo "WORD_MEMMGR_TASK = \$$addr" echo "=== Step 3: hasm23 アセンブル ===" $HASM kernel_forth_v05.asm $HASM $KERN_ASM echo "=== Step 4: シンボル整合確認 ===" sym_addr=$(grep 'WORD_MEMMGR_TASK' kernel_forth_v05.asm.sym │ awk '{print $1}') kern_addr=$(grep -oE '\$CE[0-9A-Fa-f]+' $KERN_ASM │ head -1 │ tr -d '\$') echo "Forth sym: $sym_addr  / kernel ref: $kern_addr" echo "=== Step 5: lnk23 リンク ===" cat > yuios.lds <<'EOF' OUTPUT yuios_v09.bin SYMOUT yuios_v09.sym SECTION forth   0x0000 kernel_forth_v05.asm.bin kernel_forth_v05.asm.sym SECTION kernel  0x0000 kernel_v09.asm.bin kernel_v09.asm.sym EOF $LNK yuios.lds echo "=== Step 6: 動作確認 ===" $EMU yuios_v09.bin yuios_v09.sym -q echo "=== ビルド完了 ===" ls -la yuios_v09.bin |
+| --- |
+
+## **7.2 build_dhry.sh — Dhrystone ビルド**
+
+| #!/bin/bash # build_dhry.sh - Dhrystone ビルドスクリプト # Version: 1.0 / 2026-04-29 set -e # [要修正] ツールのパス SCC=./scc23 HASM=./hasm23 LNK=./lnk23 EMU=./emu23 # [要修正] ソースファイルのパス CSRC=dhry_timer.c HARNESS_SRC=startup_harness23_v15.asm echo "=== Step 1: scc23 コンパイル ===" $SCC -o dhry.asm $CSRC echo "=== Step 2: hasm23 アセンブル ===" $HASM dhry.asm echo "=== Step 3: _main アドレス取得 ===" main_addr=$(grep -E '^[0-9a-f]+ _main$' dhry.asm.sym │ awk '{print $1}') if [ -z "$main_addr" ]; then     echo "ERROR: _main not found"; exit 1 fi echo "_main = \$$main_addr" echo "=== Step 4: startup_harness 修正 ===" cp $HARNESS_SRC startup_harness23.asm sed -i "s│JSR  _main│JSR  \$$main_addr│g" startup_harness23.asm $HASM startup_harness23.asm echo "=== Step 5: lnk23 リンク ===" cat > dhry.lds <<'EOF' OUTPUT dhry_final.bin SYMOUT dhry_final.sym SECTION code    0x0000 dhry.asm.bin dhry.asm.sym SECTION harness 0x0000 startup_harness23.asm.bin startup_harness23.asm.sym EOF $LNK dhry.lds echo "=== Step 6: 動作確認 ===" $EMU dhry_final.bin dhry_final.sym -q echo "=== ビルド完了 ===" ls -la dhry_final.bin |
+| --- |
+
+# **8. トラブルシューティング**
+
+## **8.1 PC=$E000 ループ**
+
+| **項目** | **内容** |
+| --- | --- |
+| 症状 | [DBG] Jumping into workspace! PC=E000 が連続出力される |
+| 原因 | Forth カーネル領域 ($C000 以降) が 0x00 で埋まっている。 kernelが初期化後に NOP を実行し続けて PC が $E000 まで進む。 |
+| 確認 | od -An -tx1 -j 0xC000 -N 16 yuios_v09.bin  →  全部 00 ならこの症状 |
+| 対処 | lds の SECTION 順序を「forth 先 → kernel 後」に変更（§4.6 参照） |
+
+## **8.2 PC=$0400 で Unknown opcode 18**
+
+| **項目** | **内容** |
+| --- | --- |
+| 症状 | リセット後即座に「Unknown opcode 18 at 0400」でエラー終了 |
+| 原因 | リセットベクタ ($0000-$0001) が 0x00 のまま。PC=$0000 から NOP を走り続けて変なアドレスで命令解釈エラー。 |
+| 確認 | od -An -tx1 -N 8 yuios_v09.bin  →  00 00 00 00 ... が NG |
+| 対処 | startup_harness を必ず含める。lnk23 -T 0x0400 は使わず lds スクリプトを使用。 |
+
+## **8.3 putchar で無限ループ（出力なしでタイムアウト）**
+
+| **項目** | **内容** |
+| --- | --- |
+| 症状 | dhry が出力なしでタイムアウト、または UART_STAT 待ちでハング |
+| 原因1 | _putchar 実装が UART_STAT 待ちループ。emu23 v1.02 では TX_READY=0 期間に待ちが発生（正常動作）。 |
+| 原因2 (旧) | emu23 旧版の TDRE TX 割り込みが起動直後に無限発火。emu23 v1.02 で修正済み（IRQ_MASK リセット値を 0x0004 に変更）。 |
+| 対処 | emu23 v1.02 以上を使用すること。それ以前のバージョンでは TDRE TX IRQ が問題になる。 |
+
+# **9. 関連ファイル一覧**
+
+| **ファイル名** | **バージョン** | **用途** |
+| --- | --- | --- |
+| kernel_v09.asm | v0.9.1 | Ph.2 OS ASM カーネル |
+| kernel_forth_v05.fs | v0.5.1 | Ph.2 OS Forth カーネル |
+| dhry_timer.c | — | Dhrystone（タイマー MMIO 版） |
+| startup_harness23_v15.asm | v1.5 | C プログラム用スタートアップ |
+| ysd8800_kern.tgt | — | Force ターゲット定義（OS カーネル用） |
+| ysd8800.prim | — | Force プリミティブ定義 |
+| force.c + ir/lexer/parser/codegen | v1.2 | Force コンパイラ本体 |
+| scc23_v1_00.c | v1.00 | C コンパイラ |
+| hasm23.c | v1.01 | アセンブラ |
+| lnk23.c | v2.00 | リンカ |
+| emu23_v102.c | v1.02 | エミュレータ |
+| lnk23_design_v1_3.docx | v1.3 | lnk23 設計書（lds スクリプト仕様） |
+| HANDOVER_CHAT15.md | — | Dhrystone 826 DPS 確認時の引継ぎ |
+| HANDOVER_CHAT17.docx | — | Force 混入行修正手順初出 |
+| HANDOVER_CHAT18.docx | — | Ph.2 OS M28AR 確認時の引継ぎ |
+
+# **10. 将来課題**
+
+以下の項目は現状「動いている手順」に含まれる暫定対処であり、ツール改善により解消予定。
+
+| **No.** | **課題** | **現在の対処** | **将来の解決策** |
+| --- | --- | --- | --- |
+| 1 | Force 混入行 (#WORD_xxx) | sed で直書きに変換（§4.3） | Force v1.3 側の修正で不要化 |
+| 2 | startup_harness の JSR _main | sed で直書きに変換（§5.4） | lnk23 クロスセクション参照対応 |
+| 3 | kernel_core.asm の Forth シンボルアドレスハードコード（禁止原則: kaizen 原則31） | sed でビルド毎に symファイルから動的取得・置換（§4.5・§6.6・§7.1） | lnk23 クロスセクション参照対応により根本解決（シンボル名直接参照） |
+| 4 | lds スクリプト手書き | 毎回 cat で生成 | Makefile / ビルドシステム整備 |
+
+YSD8800 Project   Page

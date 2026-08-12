@@ -1,0 +1,646 @@
+YSD8800 ISA3.0 仕様書 V0.4
+========================================
+Version: 0.4
+Status: フリーズ版（命令仕様、レジスタ仕様、ABI、スタック仕様が確定）
+Date: 2026-04-09
+
+
+1. 設計方針
+========================================
+
+1.1 基本原則
+- ISA2.2との完全バイナリ互換を維持
+- 既存プログラム（kernel.asm等）は変更なしで動作
+- 拡張プレフィックス（0x1F）配下で拡張機能を提供
+- シンプルなハード実装を維持（単サイクル～軽量パイプライン想定）
+
+1.2 設計焦点
+- マルチレジスタ対応による関数呼び出し効率化
+- ユーザ/カーネルスタック分離による保護強化
+- コンパイラABI最適化との親和性向上
+
+
+2. データ幅仕様（確定）
+========================================
+
+2.1 基本データ幅
+- レジスタ幅：16bit
+- メモリデータ幅：16bit（LDW/STW）
+- スタック操作単位：16bit（PUSH/POP で 16bit 単位）
+- 8bit データアクセス：LDB/STB で対応
+
+2.2 アドレッシング
+- メモリアドレス：16bit（64KB論理空間）
+- MMU 対応で最大1MB物理空間に拡張可能
+- すべての16bitアクセスに整列制約あり（奇数アドレスはアラインメント例外）
+
+
+3. レジスタセット（確定）
+========================================
+
+3.1 汎用・特殊レジスタ（12本）
+
+reg_id | 名称 | 説明 | 分類
+-------|------|------|----------
+0      | A    | 戻り値/演算結果 | caller-save
+1      | B    | 補助レジスタ | caller-save
+2      | X    | インデックス（暗黙使用） | caller-save
+3      | SP   | スタックポインタ（カーネル） | スタック管理
+4      | PC   | プログラムカウンタ（参照専用） | 制御
+5      | FLAGS| フラグレジスタ | 制御
+6      | T0   | 汎用（caller-save） | caller-save
+7      | T1   | 汎用（caller-save） | caller-save
+8      | T2   | 汎用（caller-save） | caller-save
+9      | T3   | 汎用（caller-save） | caller-save
+10     | S0   | 汎用（callee-save） | callee-save
+11     | S1   | 汎用（callee-save） | callee-save
+
+3.2 FLAGS レジスタ仕様
+
+bit | 名称 | 説明 | 更新タイミング
+----|------|------|---------------
+0   | Z    | ゼロフラグ（結果=0で1） | 演算・CMP命令後
+1   | N    | ネガティブフラグ（結果<0で1） | 演算・CMP命令後
+2   | IE   | 割り込みイネーブル（1で有効） | EI/DI/IRET
+3   | UM   | (予約) ユーザモード判別用 | 将来拡張
+4-15| -    | (予約) | -
+
+注記：
+  - Z, N は算術・論理演算で自動更新
+  - CMP/CMPI は FLAGS を更新するが、他のレジスタ変更なし
+  - IE は割り込み受け入れを制御（EI=1で有効）
+  - UM は ISA3.0では予約（ISA3.1以降でユーザ/カーネル自動切り替え予定）
+
+3.3 USP（ユーザスタックポインタ）- 特殊レジスタ
+
+- 汎用レジスタ番号を持たない（非アドレッサブル）
+- PUSH/POP/PUSHM の対象外
+- XCHG_SP 命令でのみアクセス可能
+- ユーザランド実行時にスタック保護を提供
+- ISA3.0では SP/USP の2つのスタックポインタが存在
+  * SP: カーネルスタック（割り込みハンドラ等）
+  * USP: ユーザスタック（アプリケーション）
+
+3.4 PC（プログラムカウンタ）
+
+- 読み取り専用（直接変更禁止）
+- JMP/JSR/IRET でのみ変更可能
+- 間接JSRでは「PC_next」（次の命令アドレス）をスタックにpush
+
+
+4. 命令フォーマット
+========================================
+
+4.1 基本フォーマット（ISA2.2継承）
+
+拡張プレフィックスなし：
+  byte0: opcode (8bit)
+  byte1: rD(4bit) | rS(4bit)
+  byte2-3: imm16 (必要な命令のみ)
+
+拡張プレフィックス（opcode=0x1F）あり：
+  byte0: 0x1F (拡張プレフィックス)
+  byte1: sub-opcode (8bit) ← 新しい sub-opcode 配置ルールに従う
+  byte2: (命令により異なる)
+  byte3-4: imm16 (必要な命令のみ)
+
+4.2 sub-opcode 空間配置（0x1Fプレフィックス配下）
+
+0x00-0x1F : 汎用レジスタ操作
+  - PUSH rS / POP rD
+  - XCHG_SP
+  - (予約)
+
+0x20-0x2F : スタック操作
+  - PUSHM mask
+  - POPM mask
+  - (予約)
+
+0x30-0x3F : シフト/ビット操作
+  - SHLI rD, #imm4
+  - SHRI rD, #imm4
+  - SARI rD, #imm4
+  - (予約)
+
+0x40-0x4F : 制御系（JSR拡張など）
+  - JSR rS (間接)
+  - (予約)
+
+0x50-0x5F : 特殊レジスタ（USP等）
+  - (予約: 将来のUSP直接操作等）
+
+0x60-0x7F : 予約（将来ALU拡張）
+
+0x80-0xFF : 予約（大規模拡張）
+
+
+5. opcode 空間全体（ISA2.2+3.0）
+========================================
+
+range    | 用途
+---------|---------------------------
+0x00-0x1E| ISA2.2: Control/System, 基本命令
+0x1F     | 拡張プレフィックス → sub-opcode 0x00-0xFF
+0x20-0x7F| ISA2.2: Data Transfer, Arithmetic, Branch
+
+
+6. ISA2.2互換命令セット（完全継承）
+========================================
+
+6.1 Control/System（0x00-0x06）
+  0x00: NOP
+  0x01: HALT
+  0x02: EI  （割り込みイネーブル）
+  0x03: DI  （割り込みディセーブル）
+  0x04: IRET （割り込みリターン）
+  0x05: SYSCALL imm16
+  0x06: BRK （デバッグトラップ）
+
+6.2 Data Transfer（0x20-0x3F）
+  0x20: MOV rD, rS
+  0x21: LDW rD, #imm16
+  0x22: LDW rD, [imm16]
+  0x23: STW rS, [imm16]
+  0x24: LDW rD, [rS]
+  0x25: STW rS, [rD]
+  0x26: LDW rD, [X + imm16]
+  0x27: STW rS, [X + imm16]
+  0x1F 0x10-0x17: LDB/STB（詳細はISA2.2参照）
+
+6.3 Arithmetic/Logic（0x40-0x5F）
+  0x40: ADD rD, rS
+  0x41: ADDI rD, #imm16
+  0x42: SUB rD, rS
+  0x43: SUBI rD, #imm16
+  0x44: CMP rD, rS
+  0x45: CMPI rD, #imm16
+  0x50: AND rD, rS
+  0x51: ANDI rD, #imm16
+  0x52: OR rD, rS
+  0x53: ORI rD, #imm16
+  0x54: XOR rD, rS
+  0x55: XORI rD, #imm16
+  0x56: NOT rD
+  0x57: SHL rD, rS  （レジスタでシフト量指定）
+  0x58: SHR rD, rS
+  0x59: SAR rD, rS
+
+6.4 Branch/Flow（0x60-0x6F）
+  0x60: JMP rel16
+  0x61: BEQ rel16
+  0x62: BNE rel16
+  0x63: BLT rel16  （符号あり）
+  0x64: BGE rel16  （符号あり）
+  0x68: JSR imm16  （直接）
+  0x69: RET
+
+注記：
+  - ISA2.2の命令セットは完全互換（変更なし）
+  - ISA3.0では新しい命令を拡張プレフィックス配下に追加
+
+
+7. ISA3.0新規命令
+========================================
+
+7.1 汎用PUSH/POP（sub-opcode 0x00-0x01）
+
+命令: PUSH rS
+format: 0x1F 0x00 rS?? (byte2の上4bit)
+動作:
+  SP = SP - 2
+  mem[SP] = rS
+制約:
+  - rS は reg_id (0-11) を指定可能
+  - ISA2.2の PUSH A/B/X との互換性維持
+
+命令: POP rD
+format: 0x1F 0x01 rD?? (byte2の上4bit)
+動作:
+  rD = mem[SP]
+  SP = SP + 2
+制約:
+  - rD は reg_id (0-11) を指定可能
+  - ISA2.2の POP A/B/X との互換性維持
+
+7.2 スタックポインタ交換（sub-opcode 0x02）
+
+命令: XCHG_SP
+format: 0x1F 0x02
+動作:
+  temp = SP
+  SP = USP
+  USP = temp
+副作用: なし（FLAGS不変）
+用途:
+  - システムコール時のスタック切り替え
+  - カーネル/ユーザランド間の保護
+
+
+7.3 即値シフト命令（sub-opcode 0x30-0x32）
+
+命令: SHLI rD, #imm4
+format: 0x1F 0x30 rD imm (byte2の上4bit=rD、下4bit=imm)
+動作:
+  rD = rD << imm  （imm は 0-15）
+  FLAGS.Z = (rD == 0) ? 1 : 0
+  FLAGS.N = (rD < 0) ? 1 : 0
+
+命令: SHRI rD, #imm4
+format: 0x1F 0x31 rD imm
+動作:
+  rD = rD >> imm  （論理右シフト）
+  FLAGS.Z = (rD == 0) ? 1 : 0
+  FLAGS.N = 0
+
+命令: SARI rD, #imm4
+format: 0x1F 0x32 rD imm
+動作:
+  rD = rD >> imm  （算術右シフト、符号拡張）
+  FLAGS.Z = (rD == 0) ? 1 : 0
+  FLAGS.N = (rD < 0) ? 1 : 0
+
+用途:
+  - 小規模乗除の効率化
+  - ISA2.2の SHL/SHR/SAR は rS レジスタでシフト量指定
+  - ISA3.0では即値化により、より効率的なコード生成が可能
+
+
+7.4 複数レジスタ操作（sub-opcode 0x20-0x21）
+
+命令: PUSHM mask
+format: 
+  byte0: 0x1F
+  byte1: 0x20
+  byte2: mask_low (下8bit)
+  byte3: mask_high (上8bit)
+  結果: 16bit mask
+
+動作:
+  for bit_pos = 15 down to 0:
+    if (mask & (1 << bit_pos)):
+      SP = SP - 2
+      mem[SP] = reg[bit_pos]
+
+命令: POPM mask
+format:
+  byte0: 0x1F
+  byte1: 0x21
+  byte2: mask_low
+  byte3: mask_high
+
+動作:
+  for bit_pos = 0 to 15:
+    if (mask & (1 << bit_pos)):
+      reg[bit_pos] = mem[SP]
+      SP = SP + 2
+
+mask定義（16bit）：
+  bit0: R0 (A)
+  bit1: R1 (B)
+  bit2: R2 (X)
+  bit3: R3 (SP) - 使用禁止（実装は無視する）
+  bit4: R4 (PC) - 非推奨
+  bit5: R5 (FLAGS) - 非推奨（通常コード禁止）
+  bit6: R6 (T0)
+  bit7: R7 (T1)
+  bit8: R8 (T2)
+  bit9: R9 (T3)
+  bit10: R10 (S0)
+  bit11: R11 (S1)
+  bit12-15: 予約
+
+制約:
+  - mask=0 は NOP
+  - SP(bit3)の操作は禁止
+  - PC/FLAGS はコード生成で非推奨扱い
+
+
+7.5 間接JSR（sub-opcode 0x40）
+
+命令: JSR rS
+format: 0x1F 0x40 rS?? (byte2の上4bit)
+動作:
+  SP = SP - 2
+  mem[SP] = PC_next
+  PC = rS
+
+注記：
+  - PC_next = 現在のPC + 命令サイズ（3byte）
+  - 戻り値アドレスとして正しいアドレスがスタックに保存される
+  - RET で復帰（ISA2.2互換）
+
+用途:
+  - 関数ポインタの呼び出し
+  - ジャンプテーブルの実装
+  - ISA2.2の JSR imm16（直接分岐）とは別
+
+
+8. 割り込み仕様（ISA3.0）
+========================================
+
+8.1 割り込みベクタテーブル
+
+IRQ_ID | 名称    | 用途
+-------|---------|----------------------------------
+0      | reset   | リセット（ベクタ参照）
+1      | irq0    | **タイマー割り込み（専用）**
+2      | irq1    | 外部割り込み1
+3      | irq2    | 外部割り込み2
+4      | align   | アラインメント例外
+5      | syscall | SYSCALL 命令
+
+ベクタテーブル配置：
+  Address 0x0000: reset handler
+  Address 0x0002: irq0 (タイマー) handler
+  Address 0x0004: irq1 handler
+  Address 0x0006: irq2 handler
+  Address 0x0008: align handler
+  Address 0x000A: syscall handler
+
+8.2 ハードウェア割り込み受理動作
+
+割り込み条件:
+  irq_pending >= 0 && (FLAGS.IE == 1)
+
+受理時の動作:
+  SP = SP - 2
+  mem[SP] = PC_current
+  SP = SP - 2
+  mem[SP] = FLAGS_current
+  FLAGS.IE = 0
+  PC = mem[irq_id * 2]
+  irq_pending = -1
+
+注記：
+  - PC_current は割り込み時点のプログラムカウンタ
+  - 復帰後 RET で正しい位置に復帰
+  - ネスト割り込みをサポート（ハンドラ内で明示的に EI）
+
+
+8.3 割り込み復帰（IRET）
+
+命令: IRET
+動作:
+  FLAGS = mem[SP]
+  SP = SP + 2
+  PC = mem[SP]
+  SP = SP + 2
+
+注記：
+  - FLAGS と PC の順序は厳密（FLAGS → PC）
+  - これにより割り込み前の状態へ完全に復帰
+
+
+8.4 ISR（割り込みハンドラ）の責務
+
+ISR の基本構造：
+  isr_handler:
+    PUSHM mask        ; 必要なレジスタを退避
+    ; ISR処理
+    POPM mask         ; レジスタを復元
+    IRET              ; 割り込みから復帰
+
+注記：
+  - 必要なレジスタのみ PUSHM で退避（全レジスタ退避は不要）
+  - caller-save レジスタは ISR責務で保存
+  - callee-save レジスタが必要な場合も ISR が保存
+
+
+9. ABI仕様（確定）
+========================================
+
+9.1 レジスタ分類
+
+caller-save（関数呼び出しで破壊可能）:
+  R0 (A), R1 (B), R2 (X)
+  R6 (T0), R7 (T1), R8 (T2), R9 (T3)
+
+callee-save（関数呼び出しで保証）:
+  R10 (S0), R11 (S1)
+
+特殊レジスタ（直接操作禁止が原則）:
+  R3 (SP): スタック管理（自動更新）
+  R4 (PC): 直接変更禁止（JMP/JSR/IRET で制御）
+  R5 (FLAGS): 原則変更禁止（EI/DI で IE のみ操作）
+
+9.2 関数引数渡し規約
+
+第1引数  → R0 (A)
+第2引数  → R1 (B)
+第3引数以降 → スタック（右から左へpush）
+
+例：
+  f(a, b, c, d)
+  → R0=a, R1=b, [SP+4]=c, [SP+2]=d （呼び出し時）
+
+9.3 戻り値
+
+R0 に格納（16bit）
+64bit以上の戻り値はスタック経由（ポインタ返却等）
+
+9.4 呼び出しシーケンス
+
+【caller 側】
+  1. 引数設定（R0/R1/スタック）
+  2. 必要な caller-save を PUSHM で退避
+  3. JSR (直接) または JSR rS (間接)
+  4. POPM で caller-save を復元
+
+【callee 側】
+  1. 必要な callee-save を PUSHM で退避
+  2. ローカル変数領域を SP で確保
+  3. 処理実行
+  4. 戻り値を R0 に設定
+  5. POPM で callee-save を復元
+  6. RET で復帰
+
+9.5 スタック構造
+
+|------------------------|
+| 第4引数以降（caller側） |
+|------------------------|
+| 戻り値アドレス          | ← JSR がpush
+|------------------------|
+| callee-save 退避        | ← callee の PUSHM
+|------------------------|
+| ローカル変数/スピル      |
+|------------------------|  ← SP
+
+9.6 フレームポインタ
+
+ISA3.0 では フレームポインタを使用しない
+  - ローカル変数は [SP + offset] でアクセス
+  - 尾部呼び出し最適化(TCO)を容易化
+  - レジスタ数制限を回避
+
+9.7 最適化許容事項
+
+許可:
+  - caller-save 全体を省略可能（関数内で非破壊な場合）
+  - callee-save を部分的に省略可能（使用しない場合）
+  - リーフ関数（他の関数を呼び出さない）の最適化
+  - PUSHM を部分的に使用可能（全レジスタpush不要）
+
+禁止:
+  - callee-save レジスタの未保存破壊（呼び出し規約違反）
+
+
+10. ISA2.2との互換性（確定）
+========================================
+
+10.1 バイナリ互換性（逆方向）
+
+ISA2.2で生成されたバイナリはISA3.0環境で変更なし実行可能
+  - 基本命令（0x00-0x7F）は ISA2.2 と同一
+  - ISA2.2コンパイル出力は ISA3.0で直接実行可能
+  - 既存プログラム（kernel.asm等）は変更なし動作
+
+10.2 アセンブラ互換性
+
+ISA2.2で作成されたアセンブラプログラム（.asm）:
+  - ISA3.0アセンブラで「そのまま」コンパイル可能
+  - 新規命令（XCHG_SP, SHLI等）は ISA3.0のみで利用可能
+  - 既存プログラムは変更なし動作
+
+10.3 レジスタ命名後方互換性
+
+A, B, X, SP, PC, FLAGS の reg_id は ISA2.2と同一
+  - ISA2.2: reg_id=0-5
+  - ISA3.0: reg_id=0-11（後方互換）
+  - ISA2.2デコーダは reg_id(4bit)の上位のみ使用 → 新規レジスタ存在に影響なし
+
+10.4 ISA2.2との主要差分表
+
+機能              | ISA2.2 | ISA3.0 | 備考
+------------------|--------|--------|----------------------------
+汎用レジスタ数    | 2(A,B) | 10(含むT,S) | caller/callee分類
+ユーザスタック    | なし   | あり(USP)  | XCHG_SP で管理
+即値シフト        | なし   | あり       | SHLI/SHRI/SARI
+複数レジスタ操作  | なし   | あり       | PUSHM/POPM
+間接JSR           | なし   | あり       | 関数ポインタ対応
+割り込みベクタ    | 5個   | 6個       | irq0がタイマー専用
+
+
+11. フリーズ仕様範囲（確定）
+========================================
+
+以下の仕様は ISA3.0 として確定（今後変更なし）:
+
+【命令仕様】
+  - ISA2.2 の全基本命令
+  - ISA3.0 の全新規命令（拡張プレフィックス 0x1F 配下）
+  - sub-opcode 配置ルール（0x00-0x1F, 0x20-0x2F等）
+  - 間接JSR の PC_next 動作
+
+【レジスタ仕様】
+  - 12本の汎用/特殊レジスタ（A, B, X, T0-T3, S0-S1）
+  - FLAGS（bit0-5, 予約bit3以降）
+  - USP（XCHG_SP のみで操作）
+  - caller/callee-save 分類
+
+【ABI仕様】
+  - 引数渡し規約（R0, R1, スタック）
+  - 戻り値（R0）
+  - スタック構造
+  - フレームポインタなし
+
+【スタック仕様】
+  - 16bit 単位の push/pop
+  - SP による動的管理
+  - PUSHM/POPM による複数レジスタ操作
+
+【割り込み仕様】
+  - 6種類の割り込み（reset, irq0-2, align, syscall）
+  - irq0 = タイマー専用
+  - PC/FLAGS の push-pop 順序
+
+
+12. 非フリーズ仕様（実装段階で決定）
+========================================
+
+以下は ISA3.0 では確定せず、ツール実装時に決定:
+
+【レジスタ割当】
+  - コンパイラがどの関数にどのレジスタを割り当てるか
+
+【spill 戦略】
+  - ローカル変数がレジスタに収まらないときスタックに何を保存するか
+
+【call 最適化】
+  - テイル呼び出し最適化（TCO）の実装方法
+  - caller-save 省略の判定基準
+  - インライン展開の条件
+
+
+13. 将来拡張検討項目（ISA3.1以降）
+========================================
+
+13.1 ISA3.1 候補
+
+- UM ビット（FLAGS bit3）の活用：ユーザ/カーネル自動切り替え
+- 条件付き分岐拡張（符号なし比較）：BULT, BUGE, BULE, BUGT
+- インデックスアドレッシング拡張：[X+rY], [imm16]相対
+
+13.2 ISA4.0 以降
+
+- レジスタ追加（R12-R15）
+- PUSHM/POPM を更に拡張
+- 乗算命令（未定：IMUL, UMUL等）
+
+
+14. ツールチェーン対応
+========================================
+
+14.1 アセンブラ
+
+ISA3.0対応版：hasm30（予定）
+  - ISA3.0新規命令の認識
+  - 新規レジスタ（T0-T3, S0-S1）の mnemonic
+  - sub-opcode 配置ルールに基づく encode
+
+14.2 コンパイラ
+
+ISA3.0対応版：scc30（予定）
+  - caller/callee-save 最適化コード生成
+  - PUSHM/POPM 自動生成
+  - 間接JSR の活用（関数ポインタ等）
+
+14.3 エミュレータ
+
+ISA3.0対応版：emu30（予定）
+  - USP レジスタ エミュレート
+  - XCHG_SP 命令実装
+  - 新規命令の実行
+
+
+15. 参考資料
+========================================
+
+15.1 ISA2.2 との主要差分
+
+詳細は§10.4 を参照
+
+15.2 命令クイックリファレンス
+
+【拡張命令（0x1F配下）】
+  0x00: PUSH rS      （汎用PUSH）
+  0x01: POP rD       （汎用POP）
+  0x02: XCHG_SP      （SP ↔ USP）
+  0x20: PUSHM mask   （複数レジスタpush）
+  0x21: POPM mask    （複数レジスタpop）
+  0x30: SHLI rD, imm （即値左シフト）
+  0x31: SHRI rD, imm （即値右シフト）
+  0x32: SARI rD, imm （即値算術右シフト）
+  0x40: JSR rS       （間接JSR）
+
+【ISA2.2継承命令】
+  詳細は§6 を参照
+
+
+---
+
+版管理情報：
+  ISA3.0_spec v0.4
+  作成日：2026-04-09
+  ステータス：フリーズ版（命令/レジスタ/ABI/スタック確定）
+  前版：v0.3 (レビュー版)

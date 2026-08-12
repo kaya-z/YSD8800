@@ -1,0 +1,178 @@
+YSD8800 ISA3.0 仮フリーズ仕様（修正版） V0.3
+
+1. 設計方針
+ISA2.2との完全バイナリ互換を維持
+拡張命令はプレフィックス 0x1F 配下
+コンパイラ（IR + レジスタ割当）前提
+シンプルな単サイクル〜軽量パイプライン実装を想定
+
+2. データ幅（確定）
+・基本データ幅：16bit
+・レジスタ幅：16bit
+・スタック操作：16bit単位
+
+👉 これでPUSH/POPとの整合を完全に取る
+
+3. レジスタ仕様
+
+3.1 レジスタ構成（12本）
+R0 : A        ; 戻り値 / 演算結果
+R1 : B        ; 補助
+R2 : X        ; インデックス
+
+R3 : SP       ; スタックポインタ
+R4 : PC       ; プログラムカウンタ
+R5 : FLAGS    ; フラグ
+
+R6 : T0       ; caller-save
+R7 : T1
+R8 : T2
+R9 : T3
+
+R10: S0       ; callee-save
+R11: S1       ; callee-save
+
+3.2 USP（ユーザスタックポインタ）
+USP : 特殊レジスタ（非アドレッサブル）
+汎用レジスタ番号を持たない
+PUSH/POP/PUSHM対象外
+以下の命令でのみアクセス可能
+XCHG_SP   ; SP ↔ USP
+
+4. スタック命令
+
+4.1 単体PUSH/POP
+PUSH rS
+POP  rD
+4.2 PUSHM / POPM（修正版）
+フォーマット（修正済）
+byte0 : 0x1F
+byte1 : sub-op
+byte2 : mask low
+byte3 : mask high
+
+👉 16bit mask
+
+sub-op
+0x20 : PUSHM
+0x21 : POPM
+mask定義（16bit）
+bit0  : R0
+bit1  : R1
+bit2  : R2
+bit3  : R3 (SP)      ; 使用禁止
+bit4  : R4 (PC)      ; 非推奨
+bit5  : R5 (FLAGS)   ; 非推奨
+bit6  : R6
+bit7  : R7
+bit8  : R8
+bit9  : R9
+bit10 : R10
+bit11 : R11
+bit12-15 : 予約
+動作順序
+PUSHM : 高bit → 低bit
+POPM  : 低bit → 高bit
+制約
+mask=0 → NOP
+SPは禁止
+FLAGSは使用非推奨（通常コード禁止扱いでもよい）
+
+5. 制御命令
+5.1 JSR（直接）
+
+（既存互換）
+
+5.2 間接JSR（確定）
+JSR rS
+動作（明確化済）
+SP -= 2
+mem[SP] = PC_next
+PC = rS
+
+👉 PC_nextをpush（重要確定）
+
+6. 割り込み仕様
+
+6.1 ハード動作
+SP -= 2 ; PC
+SP -= 2 ; FLAGS
+
+6.2 ベクタ
+PC = mem[irq_id * 2]
+
+（16bit前提として確定）
+
+6.3 ISR責務
+必要レジスタはソフトで保存（PUSHM）
+
+7. ABI仕様（確定）
+
+7.1 レジスタ分類
+caller-save
+R0, R1, R2, R6, R7, R8, R9
+callee-save
+R10, R11
+
+7.2 引数
+第1引数 : R0
+第2引数 : R1
+第3引数以降 : スタック
+
+7.3 戻り値
+R0
+
+7.4 スタック構造
+|----------------|
+| 引数           |
+|----------------|
+| return address |
+|----------------|
+| callee-save    |
+|----------------|
+| locals/spill   |
+|----------------| ← SP
+
+7.5 フレームポインタ
+未使用（v3.0）
+
+8. call規約
+caller
+・引数設定
+・必要なcaller-saveのみ保存
+・JSR
+・復帰後復元
+callee
+・使用するcallee-saveのみ保存
+・処理
+・復元
+・RET
+
+9. 最適化許容
+許可
+caller-save省略
+callee-save省略
+leaf関数最適化
+部分PUSHM
+禁止
+callee-saveの未保存破壊
+
+10. 将来拡張
+R12-R15追加
+PUSHM mask拡張（既に16bit対応済）
+パイプライン最適化
+SSA対応
+最終状態
+
+フリーズ範囲
+命令仕様
+レジスタ仕様
+ABI
+スタック仕様
+間接JSR
+
+非フリーズ
+レジスタ割当
+spill戦略
+call最適化
+

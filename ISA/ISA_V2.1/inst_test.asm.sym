@@ -1,0 +1,10 @@
+000a start
+0053 fail
+0054 beq_ok
+0060 bne_ok
+006c blt_ok
+0078 bge_ok
+007e sub_test
+0083 after_sub
+00f5 success
+00f6 align_err

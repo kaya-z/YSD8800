@@ -1,0 +1,108 @@
+# Makefile v1.0 ― YUI OS / Dhrystone ビルドシステム
+#   Step 8-B（ビルドシステム改善）／yuios_makefile_design v0.2 準拠
+#   設計目標: build_road2.sh / 既知 Dhrystone 手順と「ビルド内容がバイト等価」。
+#            記述形式を shell→Makefile に変えるだけで、ツール入力バイト列・順序・
+#            オプションは一切変えない（56416 一致・826 一致を構造的に維持）。
+#   絶対ゲート: yuios=56416バイト完全一致 / dhrystone=826/48405/P:20 完全一致
+
+# ===== M-A 必須プリアンブル（設計書 §2.2）=====
+SHELL       := /bin/bash
+.SHELLFLAGS := -ec        # -e: 途中失敗で即停止 / -c: コマンド実行
+.ONESHELL:                # レシピ全体を単一シェルで実行（シェル変数を行またぎ保持）
+
+# ===== ツール（既ビルド済み前提・カレント配置・§2.3）=====
+FORCE   := ./force
+HASM    := ./hasm23
+LNK     := ./lnk23
+SCC     := ./scc23
+EMU     := ./emu23
+MKFS    := python3 mkfs_yuifs.py
+
+# ===== 入力ソース（本番・非改変）=====
+FORTH_SRC := kernel_forth_v0_10_18.fs
+KERN_SRC  := kernel_v12_7.asm
+TGT       := ysd8800_kern.tgt
+PRIM      := ysd8800.prim
+DHRY_SRC  := dhry_timer.c
+HARNESS   := startup_harness23_v15.asm
+
+# ===== 中間（実験ファイル名・KY28/38 本番非改変）=====
+FORTH_ASM := kf_r2.asm
+KERN_ASM  := kf_r2_kern.asm
+FORTH_OBJ := kf_r2.asm.obj
+KERN_OBJ  := kf_r2_kern.asm.obj
+
+# ===== 成果物（build_road2.sh と同名）=====
+YUIOS_BIN := yuios_road2.bin
+YUIOS_SYM := yuios_road2.sym
+DHRY_BIN  := dhry_final.bin
+DISK      := disk.img
+DISK_KB   := 32
+DISK_FILE := hello.txt
+
+# ===== 検証（E-A: 凍結退避品・自己比較回避）=====
+REF_BIN   := yuios_ref_road2_I3.bin
+
+.PHONY: all yuios dhrystone disk run regress verify clean
+
+all: yuios
+
+# ---- yuios 道2ビルド（S1〜S7・build_road2.sh とバイト等価）----
+$(YUIOS_BIN): $(FORTH_SRC) $(KERN_SRC) $(TGT) $(PRIM) mk_post1.sh
+	# S1 Force（forthカーネルコンパイル）
+	$(FORCE) --target ysd8800_kern --tgt-file $(TGT) --prim-file $(PRIM) $(FORTH_SRC) -o $(FORTH_ASM)
+	# S2 後処理1（#WORD_xxx 混入行 全自動抽出・No.1）build_road2.sh Step2 等価
+	bash ./mk_post1.sh $(FORTH_ASM) $(HASM)
+	# S3 後処理2（WORD_OS_START 定義直前に .global 挿入・案F2）
+	awk '/^WORD_OS_START:/ && !d { print ".global WORD_OS_START"; d=1 } { print }' \
+	    $(FORTH_ASM) > $(FORTH_ASM).g && mv $(FORTH_ASM).g $(FORTH_ASM)
+	# S4 hasm23 -c（forth.obj・load_addr=$$5100・has_org）
+	$(HASM) -c $(FORTH_ASM)
+	# S5 kernel UNDEF 化（#$$e96e -> #$$WORD_OS_START）
+	sed 's|#\$$e96e|#\$$WORD_OS_START|g' $(KERN_SRC) > $(KERN_ASM)
+	# S6 hasm23 -c（kernel.obj・load_addr=$$0000・UNDEF reloc=2）
+	$(HASM) -c $(KERN_ASM)
+	# S7 lnk23（--machine force 必須・L-E）
+	$(LNK) -o $(YUIOS_BIN) --sym $(YUIOS_SYM) --machine force $(FORTH_OBJ) $(KERN_OBJ)
+
+yuios: $(YUIOS_BIN)
+
+# ---- dhrystone ビルド（D1〜D7・L-B 準拠）----
+$(DHRY_BIN): $(DHRY_SRC) $(HARNESS)
+	# D1 scc23（3オプション必須・L-B）
+	$(SCC) --code-org 0x0400 --data-org 0x4000 --runtime-org 0x0100 -o dhry.asm $(DHRY_SRC)
+	# D2-D3 _main 取得
+	$(HASM) dhry.asm
+	# D4 JSR _main 直書き（.ONESHELL 前提・MAIN を行またぎ保持）
+	MAIN=$$(grep -E '^[0-9a-f]+ _main$$' dhry.asm.sym | awk '{print $$1}')
+	sed -E "s/JSR[[:space:]]+_main/JSR  \$$$${MAIN}/" $(HARNESS) > startup_harness23.asm
+	# D5 hasm23
+	$(HASM) startup_harness23.asm
+	# D6 lds 自動生成（No.4 の核心：手書き lds 廃止）
+	printf 'SECTION code 0x0000 dhry.asm.bin\nSECTION harness 0x0000 startup_harness23.asm.bin\n' > dhry.lds
+	# D7 lnk23（machine既定=baremetal）
+	$(LNK) -o $(DHRY_BIN) --sym dhry_final.sym dhry.lds
+
+dhrystone: $(DHRY_BIN)
+
+# ---- disk / run / regress / verify / clean ----
+disk:
+	$(MKFS) $(DISK) --size-kb $(DISK_KB) --add-file $(DISK_FILE)
+
+run: yuios disk
+	timeout 30 $(EMU) $(YUIOS_BIN) -q --disk $(DISK)
+
+regress: dhrystone
+	@timeout 30 $(EMU) $(DHRY_BIN) -q 2>&1 | grep -iE 'Dhrystones/sec|cycles|P:'
+	@echo '期待値: Dhrystones/sec=826 / cycles=48405 / P:20'
+
+verify: yuios
+	@if cmp -s $(YUIOS_BIN) $(REF_BIN); then \
+	   echo 'VERIFY OK: $(YUIOS_BIN) は基準と全56416バイト一致'; \
+	 else echo 'VERIFY FAIL: 基準と差分あり（要調査）'; exit 1; fi
+
+clean:
+	rm -f $(FORTH_ASM)* $(KERN_ASM)* $(FORTH_OBJ) $(KERN_OBJ) \
+	      dhry.asm* startup_harness23.asm* dhry.lds \
+	      $(YUIOS_BIN) $(YUIOS_SYM) $(DHRY_BIN) dhry_final.sym
+	# 注：disk.img は誤消去防止のため clean 対象外（明示 rm を推奨）

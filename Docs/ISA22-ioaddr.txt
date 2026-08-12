@@ -1,0 +1,11 @@
+UART_TX    0xFC80
+UART_RX    0xFC82
+UART_STAT  0xFC84
+
+
+YSD8802($FC90〜$FC98)
+
+
+YSD8802_iret() をタイマー以外の IRET でも呼ぶことへの懸念
+
+dhry_all_ansi2.c からの SYSCALL 呼び出しを scc22 でどう実現するか

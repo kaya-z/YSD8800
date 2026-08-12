@@ -1,0 +1,164 @@
+YSD8800 ISA3.0 仕様 V0.1
+
+1. 設計方針
+ISA2.2との完全バイナリ互換を維持
+拡張はすべて拡張プレフィックス（0x1F）配下
+コンパイラ（IRベース）との親和性を重視
+シンプルなハード実装を維持
+
+2. レジスタ仕様
+
+2.1 レジスタ構成（12本）
+R0 : A        ; 演算結果 / 戻り値
+R1 : B        ; 補助レジスタ
+R2 : X        ; インデックス
+R3 : SP       ; スタックポインタ
+R4 : PC       ; プログラムカウンタ
+R5 : FLAGS    ; フラグ
+
+R6 : T0       ; 汎用（caller-save）
+R7 : T1
+R8 : T2
+R9 : T3
+R10: S0       ; callee-save
+R11: S1       ; callee-save
+
+2.2 予約
+R12-R15 : 将来拡張用（未使用）
+
+3. スタック命令
+
+3.1 既存命令（互換維持）
+PUSH A / B / X
+POP  A / B / X
+
+3.2 汎用PUSH/POP（追加）
+PUSH rS
+POP  rD
+
+※ 拡張プレフィックス配下
+
+3.3 複数レジスタ操作
+PUSHM / POPM
+フォーマット
+byte0 : 0x1F
+byte1 : sub-op
+byte2 : mask (8bit)
+sub-op
+0x20 : PUSHM
+0x21 : POPM
+mask定義
+bit0 : R0 (A)
+bit1 : R1 (B)
+bit2 : R2 (X)
+bit3 : R3 (SP)    ; 使用禁止
+bit4 : R4 (PC)    ; 非推奨
+bit5 : R5 (FLAGS) ; 非推奨
+bit6 : R6
+bit7 : R7
+動作順序
+PUSHM : 高bit → 低bit
+POPM  : 低bit → 高bit
+制約
+mask=0 はNOP
+SPは操作不可
+PC/FLAGSは通常用途では非推奨
+
+4. 制御命令拡張
+4.1 間接JSR（追加）
+JSR rS
+動作
+SP -= 2
+[SP] = PC
+PC = rS
+備考
+通常のJSRと同一の呼び出し規約を適用
+関数ポインタおよびジャンプテーブルに対応
+
+5. 割り込み仕様
+
+5.1 ハードウェア動作
+PC     push
+FLAGS  push
+
+5.2 ISR責務
+必要なレジスタはソフトウェアで保存（PUSHM）
+
+6. ABI仕様（ISA3.0確定）
+
+6.1 レジスタ分類
+caller-save
+R0, R1, R2, R6, R7, R8, R9
+callee-save
+R10, R11
+
+6.2 特殊レジスタ
+R3 : SP
+R4 : PC（直接操作禁止）
+R5 : FLAGS（原則変更不可）
+
+6.3 引数
+第1引数 : R0
+第2引数 : R1
+第3引数以降 : スタック
+
+6.4 戻り値
+R0
+
+6.5 呼び出しシーケンス
+caller
+(1) 引数設定
+(2) 必要に応じ caller-save退避
+(3) JSR / 間接JSR
+(4) caller-save復元
+callee
+(1) 必要に応じ callee-save退避
+(2) 処理
+(3) callee-save復元
+(4) RET
+
+6.6 スタック構造
+|----------------|
+| 引数           |
+|----------------|
+| return address |
+|----------------|
+| callee-save    |
+|----------------|
+| locals/spill   |
+|----------------| ← SP
+
+6.7 フレームポインタ
+使用しない（v3.0）
+
+7. 最適化に関する仕様
+許容
+caller-saveの省略
+callee-saveの省略
+leaf関数最適化
+PUSHMの部分使用
+禁止
+callee-saveレジスタの未保存破壊
+
+8. 将来拡張余地
+PUSHM mask拡張（16bit化）
+レジスタ増加（R12-R15）
+高度レジスタ割当（SSA/彩色）
+分岐予測・パイプライン対応
+最終状態
+仮フリーズ範囲
+レジスタ仕様
+命令仕様（PUSHM / 間接JSR含む）
+ABI（完全確定）
+
+----
+仮フリーズ範囲
+レジスタ仕様
+命令仕様（PUSHM / 間接JSR含む）
+ABI（完全確定）
+
+----
+非フリーズ
+コンパイラ内部実装
+最適化戦略
+spill方式

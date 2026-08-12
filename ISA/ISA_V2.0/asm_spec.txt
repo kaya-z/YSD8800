@@ -1,0 +1,68 @@
+YSDアセンブラ仕様書(V1.0)
+
+1.命令書式
+
+opecode  operand1  operand2
+
+opecodeの前に1文字以上のスペースを入れる。
+
+opecode 命令
+
+operand1  レジスタ
+operand2  レジスタ or アドレス or  即値
+
+即値は#xxxx
+
+]間接参照アドレスは[]を用いる。
+[]中はレジスタもしくはアドレスが入る
+
+
+2.ラベル類
+
+2-1 通常ラベル
+value: アドレスを示す
+
+
+2-2 特殊ラベル
+
+(1)命令配置をするアドレス起点指定
+.org 0x0000
+
+(2)ベクタアドレス指定
+.vector reset 0x0000
+
+
+3.サンプル
+
+----
+.vector reset 0x0000
+.vector irq0  0x0010
+
+.org 0x0000
+start:
+    EI
+loop:
+    NOP
+    JMP loop
+
+.org 0x0010
+irq0:
+    ADDI B, #1
+    IRET
+
+
+
+
+ISA2.0.txtはYSD8800という自作アーキテクチャのCPU仕様書である。
+asm_spec_fix.txtはYSDアセンブラ仕様書である。
+
+このCPUのCコンパイラをPortable C Compilerを用いて作りたい。
+pccはarchの下にアーキテクチャ毎の定義ファイルが必要である。
+必要なファイルは以下である。
+code.c
+local.c.
+local2.c.
+macdefs.h
+order.c
+table.c
+なお、pccはversion 1.1.0を用いるものとする。

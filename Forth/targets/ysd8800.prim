@@ -196,33 +196,35 @@ END-PRIM
 PRIM ZERO-EQ
     LDW  A, [{DSP}]
     CMPI A, #0
+    BEQ  _zeq_true
     LDW  A, #0
-    BNE  _zeq_f
+    JMP  _zeq_done
+_zeq_true:
     LDW  A, #$FFFF
-_zeq_f:
+_zeq_done:
     STW  A, [{DSP}]
 END-PRIM
 
 PRIM ZERO-LT
     LDW  A, [{DSP}]
     CMPI A, #0
+    BLT  _zlt_true
     LDW  A, #0
-    BGE  _zlt_f
+    JMP  _zlt_done
+_zlt_true:
     LDW  A, #$FFFF
-_zlt_f:
+_zlt_done:
     STW  A, [{DSP}]
 END-PRIM
 
 PRIM ZERO-GT
     LDW  A, [{DSP}]
     CMPI A, #0
+    BEQ  _zgt_false         ; =0 → false
+    BLT  _zgt_false         ; <0 → false
     LDW  A, #$FFFF
-    BGE  _zgt_check         ; >=0 の可能性
-    JMP  _zgt_f             ; <0 → false
-_zgt_check:
-    BEQ  _zgt_f             ; =0 → false
     JMP  _zgt_done
-_zgt_f:
+_zgt_false:
     LDW  A, #0
 _zgt_done:
     STW  A, [{DSP}]
@@ -367,19 +369,31 @@ PRIM STORE
 END-PRIM
 
 PRIM CFETCH
-    LDW  A, [{DSP}]
-    MOV  B, A
-    LDB  A, [B]
-    STW  A, [{DSP}]
+    ; ( addr -- byte )
+    ; A=addr, DSP=X → XをRSにpushしてaddr→Xで読出→X復元
+    LDW  A, [{DSP}]         ; A = addr
+    SUBI SP, #2
+    STW  {DSP}, [SP]        ; RSに現DSP(X)を退避
+    MOV  {DSP}, A           ; X = addr
+    LDB  A, [{DSP}]         ; A = mem8[addr] (zero-extend)
+    LDW  {DSP}, [SP]        ; X = 元のDSP復元
+    ADDI SP, #2
+    STW  A, [{DSP}]         ; TOS = byte
 END-PRIM
 
 PRIM CSTORE
-    LDW  A, [{DSP}]
+    ; ( byte addr -- )
+    LDW  A, [{DSP}]         ; A = addr
     ADDI {DSP}, #2
-    LDW  B, [{DSP}]
+    LDW  B, [{DSP}]         ; B = byte
     ADDI {DSP}, #2
-    MOV  A, A
-    STB  B, [A]
+    SUBI SP, #2
+    STW  {DSP}, [SP]        ; RSに現DSP退避
+    MOV  {DSP}, A           ; X = addr
+    STB  B, [{DSP}]         ; mem8[addr] = byte
+    LDW  {DSP}, [SP]        ; DSP復元
+    ADDI SP, #2
+END-PRIM
 END-PRIM
 
 PRIM PLUS-STORE
@@ -427,5 +441,29 @@ PRIM ZERO-NE
 _zne_true:
     LDW  A, #$FFFF
 _zne_done:
+    STW  A, [{DSP}]
+END-PRIM
+
+# ============================================================
+# リターンスタック操作 (YSD8800: SP = return stack)
+# ============================================================
+
+PRIM >R
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    SUBI SP, #2
+    STW  A, [SP]
+END-PRIM
+
+PRIM R>
+    LDW  A, [SP]
+    ADDI SP, #2
+    SUBI {DSP}, #2
+    STW  A, [{DSP}]
+END-PRIM
+
+PRIM R@
+    LDW  A, [SP]
+    SUBI {DSP}, #2
     STW  A, [{DSP}]
 END-PRIM

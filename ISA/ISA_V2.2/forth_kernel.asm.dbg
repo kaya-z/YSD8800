@@ -1,0 +1,500 @@
+0000 71 .org $0020
+0020 74 DI
+0021 75 IRET
+0022 78 DI
+0023 79 IRET
+0024 82 DI
+0025 83 HALT
+0026 86 DI
+0027 87 IRET
+0028 93 .org $0040
+0040 97 LDW  SP, #$FFFE         ; SP = CSTACK_TOP
+0044 100 LDW  X, #$F800          ; X = DSTACK_TOP
+0048 103 DI
+0049 106 JSR  FORTH_MAIN
+004c 109 HALT
+004d 127 NOT  A, A               ; ISA2.2: A = ~A
+004f 128 RET
+0050 134 RET                     ; A AND B → 暫定: Aをそのまま返す
+0051 137 RET                     ; A OR B  → 暫定: Aをそのまま返す
+0052 140 LDW  B, #0
+0056 141 RET                     ; A XOR B → 暫定: 0を返す
+0057 150 LDW  A, [X]             ; A = TOS (XはDSP、変化しない)
+0059 151 SUBI X, #2              ; DSP -= 2
+005d 152 STW  A, [X]             ; mem[DSP] = A (複製をプッシュ)
+005f 153 RET
+0060 157 ADDI X, #2              ; DSP += 2 (TOSを捨てる)
+0064 158 RET
+0065 162 LDW  A, [X]             ; A = b (TOS)
+0067 163 LDW  B, [$E000]         ; (Bを後で使うのでワーク確保不要、直接処理)
+006b 165 LDW  B, [X + #2]        ; B = a (NOS)
+006f 166 STW  B, [X]             ; mem[X] = a (TOSをaに)
+0071 167 STW  A, [X + #2]        ; mem[X+2] = b (NOSをbに)
+0075 168 RET
+0076 172 LDW  A, [X + #2]        ; A = a (NOS = X+2)
+007a 173 SUBI X, #2              ; DSP -= 2
+007e 174 STW  A, [X]             ; aのコピーをTOSへ
+0080 175 RET
+0081 180 LDW  A, [X]             ; A = c (TOS)
+0083 181 LDW  B, [X + #2]        ; B = b (NOS)
+0087 182 STW  A, [$E000]         ; c をワークスペースに退避
+008b 183 STW  B, [$E002]         ; b をワークスペースに退避
+008f 184 LDW  A, [X + #4]        ; A = a (3番目)
+0093 185 STW  A, [X]             ; TOS = a
+0095 186 LDW  B, [$E000]         ; B = c
+0099 187 STW  B, [X + #2]        ; NOS = c
+009d 188 LDW  B, [$E002]         ; B = b
+00a1 189 STW  B, [X + #4]        ; 3番目 = b
+00a5 190 RET
+00a6 194 LDW  A, [X]             ; A = b (TOS)
+00a8 195 ADDI X, #2              ; a を捨てる
+00ac 196 STW  A, [X]             ; b をTOSへ
+00ae 197 RET
+00af 201 JSR  FORTH_SWAP
+00b2 202 JSR  FORTH_OVER
+00b5 203 RET
+00b6 207 JSR  FORTH_OVER
+00b9 208 JSR  FORTH_OVER
+00bc 209 RET
+00bd 213 ADDI X, #4
+00c1 214 RET
+00c2 222 LDW  A, [X]             ; A = b (TOS)
+00c4 223 ADDI X, #2              ; pop
+00c8 224 LDW  B, [X]             ; B = a (新TOS)
+00ca 225 ADD  B, A               ; B = a + b
+00cc 226 STW  B, [X]             ; 結果をTOSへ
+00ce 227 RET
+00cf 231 LDW  B, [X]             ; B = b (TOS)
+00d1 232 ADDI X, #2              ; pop
+00d5 233 LDW  A, [X]             ; A = a (新TOS)
+00d7 234 SUB  A, B               ; A = a - b
+00d9 235 STW  A, [X]             ; 結果をTOSへ
+00db 236 RET
+00dc 240 LDW  A, [X]
+00de 241 ADDI A, #1
+00e2 242 STW  A, [X]
+00e4 243 RET
+00e5 247 LDW  A, [X]
+00e7 248 SUBI A, #1
+00eb 249 STW  A, [X]
+00ed 250 RET
+00ee 254 LDW  A, [X]
+00f0 255 ADD  A, A
+00f2 256 STW  A, [X]
+00f4 257 RET
+00f5 261 LDW  A, [X]
+00f7 262 LDW  B, #0
+00fb 263 SUB  B, A
+00fd 264 STW  B, [X]
+00ff 265 RET
+0100 269 LDW  A, [X]
+0102 270 CMPI A, #0
+0106 271 BGE  _abs_done
+0109 272 LDW  B, #0
+010d 273 SUB  B, A
+010f 274 STW  B, [X]
+0111 276 RET
+0112 280 LDW  A, [X]             ; A = b
+0114 281 LDW  B, [X + #2]        ; B = a
+0118 282 CMP  B, A               ; B - A: B>A なら N=0
+011a 283 BGE  _max_b_wins        ; N=0 (a>=b) → a がmax
+011d 285 ADDI X, #2              ; a を捨てる (b はTOSのまま)
+0121 286 RET
+0122 289 STW  B, [X]             ; TOS = a (b を上書き)
+0124 290 ADDI X, #2              ; 元のa位置を捨てる
+0128 293 SUBI X, #2              ; 戻す (1要素を維持)
+012c 294 STW  B, [X]
+012e 295 RET
+012f 299 LDW  A, [X]             ; A = b
+0131 300 LDW  B, [X + #2]        ; B = a
+0135 301 CMP  A, B               ; A - B: A<B なら N=1
+0137 302 BGE  _min_b_wins        ; N=0 (b>=a) → a が小さい
+013a 304 ADDI X, #2
+013e 305 RET
+013f 307 STW  B, [X]
+0141 308 ADDI X, #2
+0145 309 SUBI X, #2
+0149 310 STW  B, [X]
+014b 311 RET
+014c 319 LDW  B, [X]             ; B = b (TOS)
+014e 320 ADDI X, #2              ; pop
+0152 321 LDW  A, [X]             ; A = a (新TOS)
+0154 322 AND  A, B               ; ISA2.2: A &= B, FLAGS更新
+0156 323 STW  A, [X]
+0158 324 RET
+0159 328 LDW  B, [X]
+015b 329 ADDI X, #2
+015f 330 LDW  A, [X]
+0161 331 OR   A, B               ; ISA2.2: A |= B
+0163 332 STW  A, [X]
+0165 333 RET
+0166 337 LDW  B, [X]
+0168 338 ADDI X, #2
+016c 339 LDW  A, [X]
+016e 340 XOR  A, B               ; ISA2.2: A ^= B
+0170 341 STW  A, [X]
+0172 342 RET
+0173 346 LDW  A, [X]
+0175 347 NOT  A, A               ; ISA2.2: A = ~A, FLAGS更新
+0177 348 STW  A, [X]
+0179 349 RET
+017a 360 LDW  A, #0
+017e 361 BGE  _n_done            ; N=0 → 偽
+0181 362 LDW  A, #$FFFF          ; N=1 → 真
+0185 364 RET
+0186 368 LDW  A, [X]
+0188 369 CMPI A, #0              ; Z=1 if A==0
+018c 370 BNE  _zeq_false         ; Z=0 → 偽
+018f 371 LDW  A, #$FFFF
+0193 372 STW  A, [X]
+0195 373 RET
+0196 375 LDW  A, #0
+019a 376 STW  A, [X]
+019c 377 RET
+019d 381 LDW  A, [X]
+019f 382 CMPI A, #0              ; N=1 if A<0
+01a3 383 BGE  _zlt_false         ; N=0 → 偽
+01a6 384 LDW  A, #$FFFF
+01aa 385 STW  A, [X]
+01ac 386 RET
+01ad 388 LDW  A, #0
+01b1 389 STW  A, [X]
+01b3 390 RET
+01b4 395 LDW  A, [X]
+01b6 396 LDW  B, #0
+01ba 397 SUB  B, A               ; B = -A, N=1 if A>0
+01bc 398 BGE  _zgt_false         ; N=0 → A<=0 → 偽
+01bf 399 LDW  A, #$FFFF
+01c3 400 STW  A, [X]
+01c5 401 RET
+01c6 403 LDW  A, #0
+01ca 404 STW  A, [X]
+01cc 405 RET
+01cd 409 LDW  A, [X]             ; A = b (TOS)
+01cf 410 ADDI X, #2              ; pop b
+01d3 411 LDW  B, [X]             ; B = a (新TOS)
+01d5 412 CMP  B, A               ; B-A, Z=1 if equal
+01d7 413 BNE  _eq_false          ; Z=0 → 偽 (CMP直後にBNEで判定、FLAGSを壊さない)
+01da 414 LDW  A, #$FFFF
+01de 415 STW  A, [X]
+01e0 416 RET
+01e1 418 LDW  A, #0
+01e5 419 STW  A, [X]
+01e7 420 RET
+01e8 424 LDW  A, [X]             ; A = b
+01ea 425 ADDI X, #2
+01ee 426 LDW  B, [X]             ; B = a
+01f0 427 CMP  B, A               ; Z=1 if equal
+01f2 428 BEQ  _neq_false         ; Z=1 → 等しい → 偽
+01f5 429 LDW  A, #$FFFF
+01f9 430 STW  A, [X]
+01fb 431 RET
+01fc 433 LDW  A, #0
+0200 434 STW  A, [X]
+0202 435 RET
+0203 439 LDW  B, [X]             ; B = b (TOS)
+0205 440 ADDI X, #2              ; pop b
+0209 441 LDW  A, [X]             ; A = a (新TOS)
+020b 442 CMP  A, B               ; A-B, N=1 if a<b
+020d 443 BGE  _lt_false          ; N=0 → a>=b → 偽
+0210 444 LDW  A, #$FFFF
+0214 445 STW  A, [X]
+0216 446 RET
+0217 448 LDW  A, #0
+021b 449 STW  A, [X]
+021d 450 RET
+021e 454 LDW  A, [X]             ; A = b (TOS)
+0220 455 ADDI X, #2              ; pop b
+0224 456 LDW  B, [X]             ; B = a (新TOS)
+0226 457 CMP  A, B               ; b-a, N=1 if b<a (=a>b)
+0228 458 BGE  _gt_false          ; N=0 → b>=a (a<=b) → 偽
+022b 459 LDW  A, #$FFFF
+022f 460 STW  A, [X]
+0231 461 RET
+0232 463 LDW  A, #0
+0236 464 STW  A, [X]
+0238 465 RET
+0239 473 LDW  A, [X]             ; A = addr
+023b 474 LDW  B, [A]             ; B = mem16[addr]
+023d 475 STW  B, [X]             ; TOS = 読んだ値
+023f 476 RET
+0240 480 LDW  A, [X]             ; A = addr
+0242 481 ADDI X, #2
+0246 482 LDW  B, [X]             ; B = n
+0248 483 STW  B, [A]             ; mem[addr] = n
+024a 484 ADDI X, #2              ; pop n
+024e 485 RET
+024f 492 LDW  A, [X]             ; A = addr
+0251 493 STW  A, [$E004]         ; addr をワークスペースに退避
+0255 494 STW  X, [$E006]         ; DSPを退避
+0259 495 LDW  X, [$E004]         ; X = addr
+025d 496 LDB  A, [X]             ; A = mem8[addr] (ゼロ拡張)
+025f 497 LDW  X, [$E006]         ; DSP復元
+0263 498 STW  A, [X]             ; TOS = 読んだ値
+0265 499 RET
+0266 503 LDW  A, [X]             ; A = addr
+0268 504 ADDI X, #2
+026c 505 LDW  B, [X]             ; B = c
+026e 506 ADDI X, #2              ; pop両方
+0272 507 STW  X, [$E006]         ; DSP退避
+0276 508 MOV  X, A               ; X = addr
+0278 509 STB  B, [X]             ; mem8[addr] = B & 0xFF
+027a 510 LDW  X, [$E006]         ; DSP復元
+027e 511 RET
+027f 515 LDW  A, [X]             ; A = addr
+0281 516 ADDI X, #2
+0285 517 LDW  B, [X]             ; B = n
+0287 518 ADDI X, #2
+028b 519 STW  X, [$E006]         ; DSP退避
+028f 520 MOV  X, A               ; X = addr
+0291 521 LDW  A, [X]             ; A = mem[addr]の現在値
+0293 522 ADD  A, B               ; A += n
+0295 523 STW  A, [X]             ; mem[addr] = 新値
+0297 524 LDW  X, [$E006]         ; DSP復元
+029b 525 RET
+029c 563 HALT
+029d 567 HALT
+029e 571 HALT
+029f 579 LDW  A, [X]             ; A = 文字コード
+02a1 580 ADDI X, #2              ; pop
+02a5 581 STW  X, [$E008]         ; DSP退避
+02a9 584 LDW  B, [UART_STAT]
+02ad 585 CMPI B, #0
+02b1 586 BEQ  _emit_wait
+02b4 588 LDW  X, #$FC80          ; X = UART_TX
+02b8 589 STB  A, [X]             ; 送信
+02ba 590 LDW  X, [$E008]         ; DSP復元
+02be 591 RET
+02bf 595 STW  X, [$E008]         ; DSP退避
+02c3 598 LDW  A, [UART_STAT]
+02c7 599 CMPI A, #0
+02cb 600 BEQ  _key_wait
+02ce 602 LDW  X, #$FC82          ; X = UART_RX
+02d2 603 LDB  A, [X]             ; A = 受信データ
+02d4 604 LDW  X, [$E008]         ; DSP復元
+02d8 605 SUBI X, #2
+02dc 606 STW  A, [X]             ; データスタックへpush
+02de 607 RET
+02df 620 LDW  A, #$1234
+02e3 621 SUBI X, #2
+02e7 622 STW  A, [X]             ; DPUSH $1234
+02e9 623 JSR  FORTH_DUP          ; ( $1234 $1234 )
+02ec 624 JSR  FORTH_DROP         ; ( $1234 )
+02ef 625 JSR  FORTH_DROP         ; ( )
+02f2 628 LDW  A, #$0001
+02f6 629 SUBI X, #2
+02fa 630 STW  A, [X]
+02fc 631 LDW  A, #$0002
+0300 632 SUBI X, #2
+0304 633 STW  A, [X]             ; ( $0001 $0002 )
+0306 634 JSR  FORTH_SWAP         ; ( $0002 $0001 ) ← TOS=$0001(a)
+0309 636 LDW  A, [X]
+030b 637 CMPI A, #$0001
+030f 638 BNE  _test_fail
+0312 639 JSR  FORTH_DROP
+0315 640 JSR  FORTH_DROP         ; ( )
+0318 643 LDW  A, #$000A
+031c 644 SUBI X, #2
+0320 645 STW  A, [X]
+0322 646 LDW  A, #$000B
+0326 647 SUBI X, #2
+032a 648 STW  A, [X]             ; ( $000A $000B )
+032c 649 JSR  FORTH_OVER         ; ( $000A $000B $000A )
+032f 650 LDW  A, [X]
+0331 651 CMPI A, #$000A
+0335 652 BNE  _test_fail
+0338 653 JSR  FORTH_DROP
+033b 654 JSR  FORTH_DROP
+033e 655 JSR  FORTH_DROP         ; ( )
+0341 658 LDW  A, #$0001
+0345 659 SUBI X, #2
+0349 660 STW  A, [X]
+034b 661 LDW  A, #$0002
+034f 662 SUBI X, #2
+0353 663 STW  A, [X]
+0355 664 LDW  A, #$0003
+0359 665 SUBI X, #2
+035d 666 STW  A, [X]             ; ( $0001 $0002 $0003 )
+035f 667 JSR  FORTH_ROT          ; ( $0002 $0003 $0001 )
+0362 668 LDW  A, [X]
+0364 669 CMPI A, #$0001          ; TOS = $0001 ?
+0368 670 BNE  _test_fail
+036b 671 JSR  FORTH_DROP
+036e 672 LDW  A, [X]
+0370 673 CMPI A, #$0003          ; NOS = $0003 ?
+0374 674 BNE  _test_fail
+0377 675 JSR  FORTH_DROP
+037a 676 JSR  FORTH_DROP         ; ( )
+037d 679 LDW  A, #3
+0381 680 SUBI X, #2
+0385 681 STW  A, [X]
+0387 682 LDW  A, #4
+038b 683 SUBI X, #2
+038f 684 STW  A, [X]
+0391 685 JSR  FORTH_ADD          ; ( 7 )
+0394 686 LDW  A, [X]
+0396 687 CMPI A, #7
+039a 688 BNE  _test_fail
+039d 689 JSR  FORTH_DROP
+03a0 692 LDW  A, #10
+03a4 693 SUBI X, #2
+03a8 694 STW  A, [X]
+03aa 695 LDW  A, #3
+03ae 696 SUBI X, #2
+03b2 697 STW  A, [X]
+03b4 698 JSR  FORTH_SUB          ; ( 7 )
+03b7 699 LDW  A, [X]
+03b9 700 CMPI A, #7
+03bd 701 BNE  _test_fail
+03c0 702 JSR  FORTH_DROP
+03c3 705 LDW  A, #5
+03c7 706 SUBI X, #2
+03cb 707 STW  A, [X]
+03cd 708 JSR  FORTH_NEGATE       ; ( $FFFB = -5 )
+03d0 709 LDW  A, [X]
+03d2 710 CMPI A, #$FFFB
+03d6 711 BNE  _test_fail
+03d9 712 JSR  FORTH_DROP
+03dc 715 LDW  A, #$10
+03e0 716 SUBI X, #2
+03e4 717 STW  A, [X]
+03e6 718 JSR  FORTH_1PLUS        ; ( $11 )
+03e9 719 JSR  FORTH_1MINUS       ; ( $10 )
+03ec 720 LDW  A, [X]
+03ee 721 CMPI A, #$10
+03f2 722 BNE  _test_fail
+03f5 723 JSR  FORTH_DROP
+03f8 727 LDW  A, #$ABCD
+03fc 728 SUBI X, #2
+0400 729 STW  A, [X]
+0402 730 LDW  A, #$E010
+0406 731 SUBI X, #2
+040a 732 STW  A, [X]
+040c 733 JSR  FORTH_STORE        ; mem[$E010] = $ABCD
+040f 734 LDW  A, #$E010
+0413 735 SUBI X, #2
+0417 736 STW  A, [X]
+0419 737 JSR  FORTH_FETCH        ; ( $ABCD )
+041c 738 LDW  A, [X]
+041e 739 CMPI A, #$ABCD
+0422 740 BNE  _test_fail
+0425 741 JSR  FORTH_DROP
+0428 744 LDW  A, #$5A
+042c 745 SUBI X, #2
+0430 746 STW  A, [X]
+0432 747 LDW  A, #$E012
+0436 748 SUBI X, #2
+043a 749 STW  A, [X]
+043c 750 JSR  FORTH_CSTORE       ; mem8[$E012] = $5A
+043f 751 LDW  A, #$E012
+0443 752 SUBI X, #2
+0447 753 STW  A, [X]
+0449 754 JSR  FORTH_CFETCH       ; ( $005A )
+044c 755 LDW  A, [X]
+044e 756 CMPI A, #$005A
+0452 757 BNE  _test_fail
+0455 758 JSR  FORTH_DROP
+0458 761 LDW  A, #10
+045c 762 SUBI X, #2
+0460 763 STW  A, [X]
+0462 764 LDW  A, #$E014
+0466 765 SUBI X, #2
+046a 766 STW  A, [X]
+046c 767 JSR  FORTH_STORE        ; mem[$E014] = 10
+046f 768 LDW  A, #5
+0473 769 SUBI X, #2
+0477 770 STW  A, [X]
+0479 771 LDW  A, #$E014
+047d 772 SUBI X, #2
+0481 773 STW  A, [X]
+0483 774 JSR  FORTH_PLUS_STORE   ; mem[$E014] += 5
+0486 775 LDW  A, #$E014
+048a 776 SUBI X, #2
+048e 777 STW  A, [X]
+0490 778 JSR  FORTH_FETCH        ; ( 15 )
+0493 779 LDW  A, [X]
+0495 780 CMPI A, #15
+0499 781 BNE  _test_fail
+049c 782 JSR  FORTH_DROP
+049f 785 LDW  A, #0
+04a3 786 SUBI X, #2
+04a7 787 STW  A, [X]
+04a9 788 JSR  FORTH_ZERO_EQ      ; ( $FFFF )
+04ac 789 LDW  A, [X]
+04ae 790 CMPI A, #$FFFF
+04b2 791 BNE  _test_fail
+04b5 792 JSR  FORTH_DROP
+04b8 794 LDW  A, #1
+04bc 795 SUBI X, #2
+04c0 796 STW  A, [X]
+04c2 797 JSR  FORTH_ZERO_EQ      ; ( $0000 )
+04c5 798 LDW  A, [X]
+04c7 799 CMPI A, #0
+04cb 800 BNE  _test_fail
+04ce 801 JSR  FORTH_DROP
+04d1 804 LDW  A, #5
+04d5 805 SUBI X, #2
+04d9 806 STW  A, [X]
+04db 807 LDW  A, #5
+04df 808 SUBI X, #2
+04e3 809 STW  A, [X]
+04e5 810 JSR  FORTH_EQ           ; ( $FFFF )
+04e8 811 LDW  A, [X]
+04ea 812 CMPI A, #$FFFF
+04ee 813 BNE  _test_fail
+04f1 814 JSR  FORTH_DROP
+04f4 816 LDW  A, #3
+04f8 817 SUBI X, #2
+04fc 818 STW  A, [X]
+04fe 819 LDW  A, #7
+0502 820 SUBI X, #2
+0506 821 STW  A, [X]
+0508 822 JSR  FORTH_LT           ; ( $FFFF ) 3<7
+050b 823 LDW  A, [X]
+050d 824 CMPI A, #$FFFF
+0511 825 BNE  _test_fail
+0514 826 JSR  FORTH_DROP
+0517 828 LDW  A, #7
+051b 829 SUBI X, #2
+051f 830 STW  A, [X]
+0521 831 LDW  A, #3
+0525 832 SUBI X, #2
+0529 833 STW  A, [X]
+052b 834 JSR  FORTH_GT           ; ( $FFFF ) 7>3
+052e 835 LDW  A, [X]
+0530 836 CMPI A, #$FFFF
+0534 837 BNE  _test_fail
+0537 838 JSR  FORTH_DROP
+053a 841 LDW  A, #0
+053e 842 SUBI X, #2
+0542 843 STW  A, [X]
+0544 844 JSR  FORTH_INVERT       ; ( $FFFF )
+0547 845 LDW  A, [X]
+0549 846 CMPI A, #$FFFF
+054d 847 BNE  _test_fail
+0550 848 JSR  FORTH_DROP
+0553 850 LDW  A, #$FFFF
+0557 851 SUBI X, #2
+055b 852 STW  A, [X]
+055d 853 JSR  FORTH_INVERT       ; ( $0000 )
+0560 854 LDW  A, [X]
+0562 855 CMPI A, #0
+0566 856 BNE  _test_fail
+0569 857 JSR  FORTH_DROP
+056c 861 LDW  A, #$BEEF
+0570 862 SUBI X, #2
+0574 863 STW  A, [X]             ; DPUSH $BEEF
+0576 865 LDW  A, [X]             ; A = $BEEF
+0578 866 ADDI X, #2              ; Xスタックpop
+057c 867 PUSH A                  ; SPスタックへ push ($BEEF)
+057e 869 POP  A                  ; SPスタックから $BEEF をpop
+0580 870 SUBI X, #2              ; Xスタックpush
+0584 871 STW  A, [X]             ; Xスタックに $BEEF を書く
+0586 873 LDW  A, [X]
+0588 874 CMPI A, #$BEEF
+058c 875 BNE  _test_fail
+058f 876 JSR  FORTH_DROP
+0592 879 LDW  A, #$DEAD
+0596 880 HALT
+0597 884 LDW  A, #$BAAD
+059b 885 HALT

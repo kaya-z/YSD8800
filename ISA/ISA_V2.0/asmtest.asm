@@ -1,0 +1,6 @@
+TOKEN     EQU 0820
+
+NUMBER:
+
+LDW X,#TOKEN			
+LDW A,#0

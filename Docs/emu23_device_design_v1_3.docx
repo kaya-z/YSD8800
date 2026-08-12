@@ -1,0 +1,581 @@
+**emu23 デバイス設計書**
+
+YSD8002 MMIO化 / YSD8003 ストレージ / YSD8004 割り込みコントローラ / SYSCALL設計
+
+Version 1.3  /  2026-06-22
+
+| **版** | **日付** | **変更内容** | **担当** |
+| --- | --- | --- | --- |
+| v1.0 | 2026-04-17 | 初版作成 | Claude |
+| v1.1 | 2026-04-18 | レビュー対応: IRQ優先順位・ネスト仕様追加 / IRQ_STAT Write-to-Clear変更 / BUSY挙動明確化 / SW_BUSY状態遷移追加 / BUF_PTRオーバーラン仕様追加 / Aレジスタ退避ABI明記 / MMU特権性明記 | Claude |
+| v1.2 | 2026-04-19 | 追加レビュー対応: ①IRQ3をNMI扱いと明文化 ②BUSYラッチ方式（最低1回BUSY=1返却） ③IRQ_STATビット独立性明記 ④SW_START再発行時カウンタリセット明記 ⑤SYSCALL ABI改定（戻り値=Bレジスタ・A=caller-saved） | Claude |
+| v1.3 | 2026-06-22 | Step 8-I対応: §3.4新設（IRET時タイマー再設定はタイマーIRQ復帰時のみ＝ysd8002_timer_design §5.3準拠の明文化・emu23 v1.07実装）／§3.5新設（IRQ2優先選択を将来課題として記録） | Claude |
+
+# **1. 概要**
+
+本設計書はemu23（YSD8800 ISA2.3エミュレータ）に実装するデバイス群の設計を定める。
+
+| **デバイス** | **チップ名** | **説明** |
+| --- | --- | --- |
+| タイマー（MMIO化） | YSD8002 | 既存タイマーを関数直接呼び出しからMMIO方式に変更 |
+| ストレージ | YSD8003 | SDカード相当ブロックデバイス（emu23ではファイルイメージ） |
+| 割り込みコントローラ | YSD8004 | 複数デバイスの割り込みを集約しIRQ1に接続 |
+
+# **2. デバイス設計方針**
+
+## **2.1 デバイス制御はMMIO**
+
+全てのハードウェアデバイス制御はMMIOレジスタへの読み書きで行う。FPGA実装との対応関係が明確になり、デバイスドライバの移植性が高まる。
+
+## **2.2 OSサービスはSYSCALL**
+
+カーネルが提供するOSサービス（プロセス管理・ファイルシステム等）はSYSCALL命令を使用する。従来のSYSCALL 0x0010/0x0011（Dhrystone計測）はYSD8002 MMIOに移行し廃止する。
+
+| **項目** | **変更前（emu23 v1.00）** | **変更後（emu23 v1.01以降）** |
+| --- | --- | --- |
+| SYSCALL処理 | emu23 Cコードでif/else判定 | 単純にIRQ4を発火するだけ |
+| デバイス制御 | SYSCALLフック経由 | MMIO直接アクセス |
+| ディスパッチ | emu23側で処理 | YSD8800側ディスパッチテーブル |
+
+# **3. IRQ仕様**
+
+## **3.1 IRQ優先順位**
+
+| **優先順位** | **IRQ番号** | **用途** | **種別** | **備考** |
+| --- | --- | --- | --- | --- |
+| 0（最高） | IRQ3 | アラインメント例外 | NMI | IE=0中でも即時発生（v1.2確定） |
+| 1 | IRQ0 | YSD8002 タイマー | マスク可 | 外部デバイス最高位・YSD8004経由なし |
+| 2 | IRQ1 | YSD8004経由（複数デバイス） | マスク可 | YSD8003ストレージ完了等 |
+| 3 | IRQ2 | 予備 | マスク可 |  |
+| 4（最低） | IRQ4 | SYSCALL | マスク可 |  |
+
+**【重要】IRQ3（アラインメント例外）はNMI（Non-Maskable Interrupt）扱いとする。IE=0中（割り込み禁止中）であっても即時発生する。アラインメント違反はプログラムバグによる例外であり、無視して処理を続けることは危険なためである。**
+
+## **3.2 同時発生時の動作**
+
+| **ルール** | **説明** |
+| --- | --- |
+| NMI優先 | IRQ3はIE状態に関わらず最優先で即時受理する |
+| 優先処理 | IE=1のときpending中で最も優先順位の高いIRQを受理する |
+| 低優先IRQ保持 | 低優先IRQはpendingとして保持し、IRET後に再評価して受理する |
+| ネスト禁止 | IRQ受理時にIE=0となるため、ハンドラ実行中は原則ネスト禁止 |
+| ネスト許可 | ハンドラ内でEI命令を実行した場合のみ高優先IRQのネスト割り込みを許可する |
+| IRET後再評価 | IRET実行時にpending中IRQがあれば次命令フェッチ前に再評価・受理する |
+
+## **3.4 IRET時のタイマー再設定（v1.3新設・Step 8-I）**
+
+タイマー（YSD8002）の次回IRQ発火サイクル再設定（YSD8002_iret相当）は、
+**タイマーIRQ（IRQ0）から復帰するIRETでのみ実行する。** 他のIRQ
+（IRQ1=YSD8004経由・IRQ3=アラインメント・IRQ4=SYSCALL）のIRETでは
+タイマー再設定を行ってはならない。これは ysd8002_timer_design_v1_0.docx §5.3
+「IRQ0（タイマー）のみを対象とする。他のIRQのIRETでは呼び出さない」の明文化である。
+
+**背景（既知不具合の是正）**: emu23 v1.06以前はIRET命令（case 0x04）が
+IRQ種別を問わず無条件にYSD8002_iret()を呼んでいた（§5.3違反の実装バグ）。
+このためIRQ1等のハンドラがIRETするたびタイマーの次回発火が「現在cycle+period」へ
+先送りされ、タイマーとIRQ1が高頻度衝突する負荷下でタイマーIRQが大量欠落していた。
+emu23 v1.07で「タイマーIRQ実行中フラグ（timer_in_service）」を導入し、
+タイマーIRQ受理時にセット・IRET時にこのフラグが真の場合のみYSD8002_iret()を
+呼んでクリアする方式で是正した。
+
+**検証**: タイマー(IRQ0)とIRQ1を高頻度衝突させる専用テスト（理論タイマーIRQ=983）で、
+v1.06=1回受理（欠落）→ v1.07=983回受理（欠落ゼロ）を実証。通常動作（衝突なし）の
+回帰は、yuios 56416バイト一致・Dhrystone 826/48405/P:20一致・v1.06/v1.07同一
+バイナリ出力完全一致で確認済み。
+
+**FPGA実装への含意**: timer_in_serviceフラグは逐次実行エミュレータ固有の足場であり、
+ハードのRTLには写像されない。ハードのタイマーは自走カウンタ＋オートリロードで
+CPUのIRETと無関係に時を刻むため、本不具合はハードには元来存在しない。
+詳細は step8i_irqfix_design_v0_2.md §3.3 を参照。
+
+## **3.5 IRQ2優先選択（将来課題・v1.3新設・Step 8-I）**
+
+§3.2「優先処理: pending中で最も優先順位の高いIRQを受理する」の厳密実装のうち、
+IRQ1とIRQ2の優先選択ロジックは現状未実装である。再評価機構は irq_stat 非0時に
+一律IRQ1を再pendingする。**IRQ2（§3.1で「予備」＝現状デバイス割当なし）が
+将来使用される時点で、IRQ1/IRQ2の優先選択を§3.1の固定優先順位に従って
+実装する必要がある。** 現状はIRQ2未使用のため実害なし。本項目を将来課題として記録する。
+
+## **3.3 IRQ構成図**
+
+IRQ3（アラインメント例外） ─── NMI（最優先・IE=0でも即時）
+
+YSD8002 ──────────────────── IRQ0（マスク可・外部最高位）
+
+YSD8001(UART将来) ─┐
+
+YSD8003(Storage)  ─┼─▶ YSD8004 ─── IRQ1（マスク可）
+
+(将来拡張)        ─┘
+
+IRQ2 ─────────────────────── 予備（マスク可）
+
+IRQ4 ─────────────────────── SYSCALL（マスク可）
+
+# **4. MMIOアドレスマップ全体**
+
+| **アドレス** | **デバイス** | **用途** |
+| --- | --- | --- |
+| $FC80 | YSD8001 | UART TX データレジスタ |
+| $FC82 | YSD8001 | UART RX データレジスタ |
+| $FC84 | YSD8001 | UART ステータス（bit0=TX ready, bit1=RX ready） |
+| $FC86〜$FC8F | （予備） | 将来拡張用 |
+| $FC90 | YSD8002 | TCR タイマー制御レジスタ |
+| $FC92 | YSD8002 | PERIOD_HI IRQ周期設定 上位16bit |
+| $FC94 | YSD8002 | PERIOD_LO IRQ周期設定 下位16bit |
+| $FC96 | YSD8002 | CYCLE_LO サイクルカウンタ 下位16bit（読み出しでHIラッチ） |
+| $FC98 | YSD8002 | CYCLE_HI サイクルカウンタ 上位16bit |
+| $FC9A | YSD8002 | SW_RUNS ストップウォッチ用 Number_Of_Runs |
+| $FC9C | YSD8002 | SCORE_LO 経過サイクル数 下位16bit（読み出しでHIラッチ） |
+| $FC9E | YSD8002 | SCORE_HI 経過サイクル数 上位16bit |
+| $FCA0 | YSD8003 | SD_CMD コマンドレジスタ |
+| $FCA2 | YSD8003 | SD_STAT ステータスレジスタ |
+| $FCA4 | YSD8003 | LBA_LO セクタアドレス 下位16bit |
+| $FCA6 | YSD8003 | LBA_HI セクタアドレス 上位16bit |
+| $FCA8 | YSD8003 | BUF_PTR バッファポインタ（0〜511） |
+| $FCAA | YSD8003 | DATA PIOデータレジスタ（8bit有効） |
+| $FCAC | YSD8003 | IRQ_CTRL 割り込み制御 |
+| $FCAE | YSD8003 | DISK_LO 総セクタ数 下位16bit |
+| $FCB0 | YSD8003 | DISK_HI 総セクタ数 上位16bit |
+| $FCB2 | YSD8004 | IRQ_STAT 割り込み要因レジスタ（Write-to-Clear） |
+| $FCB4 | YSD8004 | IRQ_MASK 割り込みマスクレジスタ |
+| $FCB6〜$FEFF | （将来拡張） | 予備 |
+| $FF00〜$FF0F | MMU（特権） | PTR[0〜15] ページテーブルレジスタ（特権モード専用） |
+| $FF10 | MMU（特権） | MCR MMU制御レジスタ（特権モード専用） |
+| $FF11〜$FFFF | （予約） |  |
+
+*【注】$FF00〜$FF1Fはカーネル特権領域。将来のKRN_PROT実装時にユーザモードからのアクセスを禁止する（MMU設計書参照）。*
+
+# **5. YSD8002 タイマーMMIO化設計**
+
+## **5.1 レジスタ仕様**
+
+| **アドレス** | **R/W** | **名称** | **説明** |
+| --- | --- | --- | --- |
+| $FC90 | R/W | TCR | タイマー制御レジスタ（詳細は下表） |
+| $FC92 | R/W | PERIOD_HI | IRQ周期設定 上位16bit（cycles_per_irq[31:16]） |
+| $FC94 | R/W | PERIOD_LO | IRQ周期設定 下位16bit（cycles_per_irq[15:0]） |
+| $FC96 | R | CYCLE_LO | 現在サイクルカウンタ 下位16bit（読み出し時に上位をラッチ） |
+| $FC98 | R | CYCLE_HI | 現在サイクルカウンタ 上位16bit（CYCLE_LO読み後に読む） |
+| $FC9A | R/W | SW_RUNS | ストップウォッチ用 Number_Of_Runs 設定値 |
+| $FC9C | R | SCORE_LO | 経過サイクル数 下位16bit（SW_STOP後確定・読み出しでHIラッチ） |
+| $FC9E | R | SCORE_HI | 経過サイクル数 上位16bit（SCORE_LO読み後に読む） |
+
+### **5.1.1 TCRビット定義**
+
+| **ビット** | **名称** | **R/W** | **説明** |
+| --- | --- | --- | --- |
+| bit0 | TIMER_EN | R/W | 1=タイマーIRQ有効 |
+| bit1 | IRQ_EN | R/W | 1=IRQ0発火有効 |
+| bit2 | SW_START | W | 1書き込みで計測開始トリガ（自動クリア・読み出しは常に0） |
+| bit3 | SW_STOP | W | 1書き込みで計測停止トリガ（自動クリア・読み出しは常に0） |
+| bit4 | SW_BUSY | R | 1=計測中（状態遷移は下表参照） |
+| bit7〜5 | （予約） | — | 常に0 |
+
+*【注】bit2/bit3はMC6809系PIA/ACIAと同様の方式。書き込みでトリガが発生し即座に0に戻る。*
+
+### **5.1.2 SW_BUSY状態遷移（v1.2更新）**
+
+| **状態** | **SW_BUSY値** | **遷移条件** | **次状態** | **カウンタ動作** |
+| --- | --- | --- | --- | --- |
+| IDLE | 0 | SW_START書き込み | MEASURING | 計測カウンタをリセットして開始 |
+| MEASURING | 1 | SW_STOP書き込み | IDLE | カウンタ停止・SCORE確定 |
+| MEASURING | 1 | SW_START再書き込み | MEASURING | カウンタをリセットして再スタート（v1.2追加） |
+
+**【重要】SW_START再発行（計測中にSW_STARTを書き込む）時は、カウンタをリセットして計測を再開始する。直前のSCOREは上書きされる。**
+
+## **5.2 64bitカウンタのラッチ方式**
+
+64bitカウンタを16bitレジスタで2回に分けて読み出す際の一貫性保証：CYCLE_LO読み出し時に上位16bitをラッチする。SCORE_LOも同様。
+
+LDW  A, [$FC96]      ; CYCLE_LO読み出し → この瞬間CYCLE_HIもラッチ
+
+LDW  B, [$FC98]      ; CYCLE_HI（ラッチ値）を読み出す
+
+## **5.3 使用例（アセンブラ）**
+
+### **5.3.1 タイマーIRQ設定（100Hz @4MHz = 40,000サイクル/IRQ）**
+
+LDW  A, #0
+
+STW  A, [$FC92]          ; PERIOD_HI = 0
+
+LDW  A, #40000
+
+STW  A, [$FC94]          ; PERIOD_LO = 40000
+
+LDW  A, #0x0003          ; TIMER_EN | IRQ_EN
+
+STW  A, [$FC90]          ; TCR設定
+
+### **5.3.2 ストップウォッチ計測**
+
+; 計測開始（SW_BUSY=0→1、カウンタリセット）
+
+LDW  A, #10
+
+STW  A, [$FC9A]          ; SW_RUNS = 10
+
+LDW  A, #0x0004          ; SW_START bit
+
+STW  A, [$FC90]          ; トリガ発行
+
+; ... 計測対象処理 ...
+
+; 計測停止（SW_BUSY=1→0、SCORE確定）
+
+LDW  A, #0x0008          ; SW_STOP bit
+
+STW  A, [$FC90]          ; トリガ発行
+
+; 結果読み出し（LO先読み必須）
+
+LDW  A, [$FC9C]          ; SCORE_LO（この瞬間HIもラッチ）
+
+LDW  B, [$FC9E]          ; SCORE_HI
+
+## **5.4 emu23実装方針**
+
+| **変更箇所** | **変更内容** |
+| --- | --- |
+| wr16($FC90) SW_START | sw_busy=1・dhry_start_cycle=cpu.cycleをセット（再発行時もリセット） |
+| wr16($FC90) SW_STOP | sw_busy=0・elapsed_cycles確定・SCOREラッチ |
+| wr16($FC92/$FC94) | PERIOD_HI/LO書き込み → cycles_per_irqを再計算 |
+| rd16($FC96) | CYCLE_LOラッチ → CYCLE_HI返却 |
+| rd16($FC9C) | SCORE_LOラッチ → SCORE_HI返却 |
+| SYSCALL case 0x05 | if/else chain削除 → cpu.irq_pending=4のみ |
+| IRET case 0x04 | YSD8002_iret()はMMIO管理（PERIOD設定値で次回発火計算）に移行 |
+
+# **6. YSD8003 ストレージ設計**
+
+## **6.1 概要**
+
+| **項目** | **内容** |
+| --- | --- |
+| セクタサイズ | 512バイト固定 |
+| アドレッシング | LBA（Logical Block Address）32bit |
+| 転送方式 | PIO方式（8bit幅・8bitCPU対応） |
+| emu23バックエンド | ホストファイルシステム上の.imgファイル |
+| emu23起動オプション | --disk <imagefile.img> |
+| 割り込み | YSD8004経由IRQ1（IRQ_EN有効時） |
+
+## **6.2 レジスタ仕様**
+
+| **アドレス** | **R/W** | **名称** | **説明** |
+| --- | --- | --- | --- |
+| $FCA0 | R/W | SD_CMD | コマンドレジスタ（詳細は下表） |
+| $FCA2 | R | SD_STAT | ステータスレジスタ（詳細は下表） |
+| $FCA4 | R/W | LBA_LO | セクタアドレス 下位16bit（LBA[15:0]） |
+| $FCA6 | R/W | LBA_HI | セクタアドレス 上位16bit（LBA[31:16]） |
+| $FCA8 | R/W | BUF_PTR | バッファポインタ（0〜511）。EXEC発行時に自動リセット |
+| $FCAA | R/W | DATA | PIOデータレジスタ（8bit有効）。読み書き後BUF_PTRが自動インクリメント |
+| $FCAC | R/W | IRQ_CTRL | 割り込み制御（詳細は下表） |
+| $FCAE | R | DISK_LO | ディスク総セクタ数 下位16bit |
+| $FCB0 | R | DISK_HI | ディスク総セクタ数 上位16bit |
+
+### **6.2.1 SD_CMDコマンド値**
+
+| **値** | **名称** | **説明** |
+| --- | --- | --- |
+| 0 | READ_SETUP | 読み込み準備（LBA設定後に発行） |
+| 1 | WRITE_SETUP | 書き込み準備（LBA設定後に発行） |
+| 2 | EXEC | 転送実行。BUF_PTRリセット・BUSY=1セット後にfread()/fwrite()実行 |
+
+### **6.2.2 SD_STATビット定義**
+
+| **ビット** | **名称** | **説明** |
+| --- | --- | --- |
+| bit0 | BUSY | BUSY挙動はBUSYラッチ方式参照（v1.2） |
+| bit1 | ERROR | 1=直前のコマンドがエラー |
+| bit2 | READY | 1=デバイス準備完了（--diskでイメージが開けた） |
+| bit3〜15 | （予約） | 常に0 |
+
+### **6.2.3 BUSYラッチ方式（v1.2確定）**
+
+emu23はシングルスレッドのためEXEC発行後即座にfread()/fwrite()が完了するが、実機との乖離を防ぐため以下のラッチ方式を採用する。
+
+| **タイミング** | **BUSY値** | **sd_busy_latch** | **説明** |
+| --- | --- | --- | --- |
+| EXEC発行直後 | 1 | 1 | 転送処理完了後もBUSY=1を維持 |
+| 1回目のSD_STAT読み出し | 1 | 0→クリア | BUSY=1を返しラッチをクリア |
+| 2回目以降のSD_STAT読み出し | 0 | 0 | BUSY=0を返す（転送完了） |
+
+これによりポーリングコードは最低2回SD_STATを読み出す動作となり、実機との挙動差異が最小化される。
+
+*【注】これはemu23固有の擬似実装であり、FPGA実機では実際の転送時間に応じてBUSYが維持される。*
+
+### **6.2.4 IRQ_CTRLビット定義**
+
+| **ビット** | **名称** | **説明** |
+| --- | --- | --- |
+| bit0 | IRQ_EN | 1=転送完了時にYSD8004経由でIRQ1を発火 |
+| bit1 | ERR_EN | 1=エラー時にYSD8004経由でIRQ1を発火 |
+| bit2〜15 | （予約） | 常に0 |
+
+### **6.2.5 BUF_PTRオーバーラン仕様**
+
+| **条件** | **BUF_PTR動作** |
+| --- | --- |
+| BUF_PTR = 0〜510 のとき DATA 読み書き | BUF_PTR += 1 |
+| BUF_PTR = 511 のとき DATA 読み書き | BUF_PTR → 0（ラップアラウンド・エラーなし） |
+| EXEC発行 | BUF_PTR → 0（自動リセット） |
+| BUF_PTRへの直接書き込み | 任意値（0〜511）に設定可能 |
+
+*【注】将来的に16bit DATAレジスタへの拡張を考慮した設計とする。現バージョンは8bitCPU互換性のため8bit固定。*
+
+## **6.3 転送シーケンス**
+
+### **6.3.1 セクタREAD（LBA=5、読み込み先=$5000）**
+
+; ① LBA設定
+
+LDW  A, #0
+
+STW  A, [$FCA6]          ; LBA_HI = 0
+
+LDW  A, #5
+
+STW  A, [$FCA4]          ; LBA_LO = 5
+
+; ② READ_SETUP
+
+LDW  A, #0
+
+STW  A, [$FCA0]          ; SD_CMD = READ_SETUP
+
+; ③ EXEC発行（BUF_PTR=0・BUSY=1・fread()実行・latch=1）
+
+LDW  A, #2
+
+STW  A, [$FCA0]          ; SD_CMD = EXEC
+
+; ④ 完了待ち（1回目: BUSY=1返却・latchクリア / 2回目: BUSY=0）
+
+_wait_read:
+
+    LDW  A, [$FCA2]      ; SD_STAT読み出し
+
+    ANDI A, #0x0001      ; BUSY bit
+
+    BNE  _wait_read      ; BUSY=1なら再読み出し
+
+; ⑤ PIOで512バイト読み出し
+
+LDW  X, #$5000
+
+LDW  B, #512
+
+_pio_read:
+
+    LDB  A, [$FCAA]      ; DATA読み出し（BUF_PTR自動インクリメント）
+
+    STB  A, [X]
+
+    ADDI X, #1
+
+    SUBI B, #1
+
+    BNE  _pio_read
+
+### **6.3.2 セクタWRITE（LBA=5、書き込み元=$5000）**
+
+; ① LBA設定・WRITE_SETUP
+
+LDW  A, #0 / STW  A, [$FCA6]  ; LBA_HI = 0
+
+LDW  A, #5 / STW  A, [$FCA4]  ; LBA_LO = 5
+
+LDW  A, #1 / STW  A, [$FCA0]  ; SD_CMD = WRITE_SETUP
+
+; ② BUF_PTRリセット＋PIOで512バイト書き込み
+
+LDW  A, #0 / STW  A, [$FCA8]  ; BUF_PTR = 0
+
+LDW  X, #$5000 / LDW  B, #512
+
+_pio_write:
+
+    LDB  A, [X] / STB  A, [$FCAA]  ; DATA書き込み
+
+    ADDI X, #1 / SUBI B, #1 / BNE  _pio_write
+
+; ③ EXEC発行（BUSY=1・fwrite()実行・latch=1）
+
+LDW  A, #2 / STW  A, [$FCA0]  ; SD_CMD = EXEC
+
+; ④ 完了待ち
+
+_wait_write:
+
+    LDW  A, [$FCA2] / ANDI A, #0x0001 / BNE  _wait_write
+
+## **6.4 emu23実装方針**
+
+| **項目** | **内容** |
+| --- | --- |
+| 内部バッファ | uint8_t sd_buf[512]（emu23グローバル変数） |
+| BUSYラッチ | int sd_busy_latch（EXEC発行で1セット・SD_STAT初回読み出しでクリア） |
+| ディスクイメージ | FILE *disk_fp（--diskオプションで開く） |
+| READ処理 | EXEC: sd_busy_latch=1 → fseek(lba*512) + fread(sd_buf,512) → IRQ発火 |
+| WRITE処理 | EXEC: sd_busy_latch=1 → fseek(lba*512) + fwrite(sd_buf,512) → IRQ発火 |
+| BUF_PTR | EXEC発行時に0リセット・DATA読み書き毎にインクリメント（511→0ラップ） |
+| IRQ発火 | EXEC完了時にIRQ_EN=1ならysd8004_raise(bit1)を呼ぶ |
+
+# **7. YSD8004 割り込みコントローラ設計**
+
+## **7.1 レジスタ仕様**
+
+| **アドレス** | **R/W** | **名称** | **説明** |
+| --- | --- | --- | --- |
+| $FCB2 | R/W | IRQ_STAT | 割り込み要因レジスタ。Write-to-Clear方式 |
+| $FCB4 | R/W | IRQ_MASK | 割り込みマスク。1=マスク（禁止）、0=許可 |
+
+### **7.1.1 IRQ_STAT / IRQ_MASKビット定義**
+
+| **ビット** | **デバイス** | **説明** |
+| --- | --- | --- |
+| bit0 | YSD8001 UART RX | UART受信完了（将来実装） |
+| bit1 | YSD8003 ストレージ | 転送完了またはエラー |
+| bit2〜14 | （将来拡張） |  |
+| bit15 | （予約） | 常に0 |
+
+### **7.1.2 IRQ_STATビット独立性（v1.2追加）**
+
+| **規則** | **説明** |
+| --- | --- |
+| 独立セット | 各ビットは対応デバイスの割り込み発生時に独立してセットされる |
+| 独立クリア | Write-to-Clearで指定したビットのみクリアされ、他ビットは影響を受けない |
+| 同時保持 | 複数ビットが同時にセットされても全て保持される |
+| 処理順序 | 複数ビット同時発生時の処理順序はハンドラ実装側の責務とし、本仕様は規定しない |
+
+### **7.1.3 IRQ1ハンドラの処理フロー**
+
+_irq1_handler:
+
+    PUSH A
+
+    LDW  A, [$FCB2]      ; IRQ_STAT読み出し（クリアされない）
+
+    PUSH A               ; 要因を保存
+
+    ; bit1: YSD8003ストレージ完了チェック
+
+    ANDI A, #0x0002
+
+    BEQ  _irq1_check_uart
+
+    LDW  A, #0x0002
+
+    STW  A, [$FCB2]      ; Write-to-Clearでbit1のみクリア
+
+    JSR  _handle_storage ; 処理中に他ビットがセットされても保持される
+
+_irq1_check_uart:        ; bit0: UART RX（将来）
+
+    ; ...
+
+_irq1_ret:
+
+    POP  A               ; 要因を破棄
+
+    POP  A
+
+    IRET
+
+# **8. SYSCALLディスパッチテーブル設計**
+
+## **8.1 SYSCALL番号体系**
+
+| **番号範囲** | **カテゴリ** | **説明** |
+| --- | --- | --- |
+| $0000〜$00FF | プロセス管理 | fork/exit/wait等 |
+| $0100〜$01FF | ファイルシステム | open/close/read/write等 |
+| $0200〜$02FF | メモリ管理 | malloc/free等 |
+| $0300〜$03FF | 時刻・タイマー | gettimeofday等 |
+| $0400〜$04FF | デバッグ | printk等 |
+| $0500〜$FEFF | （将来拡張） |  |
+| $FF00〜$FFFF | （予約） |  |
+
+| **番号** | **名称** | **説明** |
+| --- | --- | --- |
+| $0000 | SYS_EXIT | プロセス終了 |
+| $0001 | SYS_FORK | プロセス生成（将来） |
+| $0002 | SYS_WAIT | プロセス待機（将来） |
+| $0100 | SYS_OPEN | ファイルオープン（将来） |
+| $0101 | SYS_CLOSE | ファイルクローズ（将来） |
+| $0102 | SYS_READ | ファイル読み込み（将来） |
+| $0103 | SYS_WRITE | ファイル書き込み（将来） |
+| $0200 | SYS_MALLOC | メモリ確保（将来） |
+| $0201 | SYS_FREE | メモリ解放（将来） |
+| $0300 | SYS_GETTIME | 時刻取得（将来） |
+| $0400 | SYS_PRINTK | カーネルデバッグ出力 |
+
+## **8.2 SYSCALL ABI（v1.2改定）**
+
+SYSCALL命令の呼び出し規約を以下にABIとして定める。
+
+| **項目** | **規約** |
+| --- | --- |
+| 入力: SYSCALL番号 | Aレジスタ |
+| 入力: 引数 | スタック渡し（事前にPUSHしておく） |
+| 出力: 戻り値 | Bレジスタ（成功時: >= 0 / 失敗時: < 0） |
+| A: caller-saved | ハンドラはAレジスタを保存・復元する責務を持つ |
+| B: caller-saved | 戻り値として使用。呼び出し元はIRET後にBを参照する |
+
+*【注】AとBの役割を明確に分離することで、ネスト時のスタック破壊リスクをなくす。*
+
+## **8.3 スタック状態（IRQ4受理後）**
+
+| **SPオフセット** | **内容** | **備考** |
+| --- | --- | --- |
+| SP+0 | FLAGS | IRQ4受理時にpush |
+| SP+2 | 戻りPC | IRQ4受理時にpush |
+| SP+4 | 引数1 | 呼び出し側が事前にpush |
+| SP+6 | 引数2 |  |
+| SP+N | 引数N/2 | Aレジスタ = SYSCALL番号（スタック外） |
+
+## **8.4 SYSCALLハンドラのABI規約フレーム**
+
+; 標準的なSYSCALLハンドラ（戻り値あり）
+
+_syscall_handler:
+
+    PUSH A               ; ★caller-saved: SYSCALL番号を退避（必須）
+
+    PUSH X               ; 作業レジスタ退避
+
+    ; ... ディスパッチ処理 ...
+
+    ; Bレジスタに戻り値をセット（成功:>=0 / 失敗:<0）
+
+    POP  X               ; 作業レジスタ復元
+
+    POP  A               ; ★caller-saved: Aレジスタ復元
+
+    IRET                 ; 呼び出し元へ復帰（BはIRET後も保持）
+
+*【注】POP AはIRET前に必ず実行する。BはPOP Aで変化しないためIRET後の呼び出し元でBレジスタから戻り値を取得できる。*
+
+## **8.5 ディスパッチ実装（案A→案B移行方式）**
+
+_syscall_disp_ptr:       ; 間接ポインタ変数（startup_harness23.asm）
+
+    .word _harness_dispatch
+
+| **段階** | **ディスパッチ先** | **移行手順** |
+| --- | --- | --- |
+| 案A（初期） | _harness_dispatch（harness内） | デフォルト状態 |
+| 案B（YUI OS導入後） | _kernel_dispatch（カーネル内） | OS起動時に_syscall_disp_ptrを書き換え |
+
+# **9. 将来拡張**
+
+| **項目** | **説明** | **優先度** |
+| --- | --- | --- |
+| YSD8001 UART割り込み | UART RX完了時にYSD8004経由でIRQ1発火 | 中 |
+| YSD8002 --freqオプション | emu23起動時にcpu_freqを指定可能にする | 低 |
+| YSD8003 16bit DATA | $FCAAを16bit幅に拡張（8bitCPU互換性確認後） | 低 |
+| YSD8003 複数ドライブ | --disk2等で複数イメージを指定 | 低 |
+| ファイルシステム層 | FAT32相当の簡易実装（YUI OS側） | 高 |
+| SYSCALLフルセット | SYS_OPEN/READ/WRITE等をYUI OSカーネルに実装 | 高 |
+
+emu23 デバイス設計書 v1.3  /

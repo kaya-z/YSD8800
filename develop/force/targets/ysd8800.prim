@@ -1,0 +1,486 @@
+# force/targets/ysd8800.prim
+# YSD8800 ISA2.3 プリミティブ展開テンプレート
+# Version: 1.1   (2026-05-30)
+# Force Forth Cross Compiler v1.0 以降で使用
+#
+# 改版履歴:
+#   v1.1 (2026-05-30): PRIM PLUS-STORE (+!) のバグ修正。旧版は LDW B,[A]; ADD B,B
+#                      で val を無視し mem[addr] を2倍化していた（mem[addr]=2*mem）。
+#                      正しい mem[addr]=mem[addr]+val へ修正（CFETCH の X 退避
+#                      イディオムを応用）。kernel_forth での +! 使用実績は皆無で
+#                      露見していなかった（Step 5-5 FILE-READ-IMPL 実装時に発見）。
+#   v1.0       : ベースライン（ISA2.2 時代から ISA2.3 へ移行・バージョン無表記）
+#
+# 書式:
+#   PRIM name
+#   <アセンブラ行...>
+#   END-PRIM
+#
+# レジスタ変数（設定ファイルから引き継ぎ）:
+#   {DSP} = X   (データスタックポインタ)
+#   {TOS} = A   (演算主レジスタ)
+#   {AUX} = B   (補助レジスタ)
+#
+# スタック操作規約:
+#   [X]     = TOS (スタックトップ)
+#   [X+#2]  = NOS (スタック2番目)
+#   SUBI X,#2 = push (スタック拡張)
+#   ADDI X,#2 = pop  (スタック縮小)
+ 
+# ============================================================
+# スタック操作
+# ============================================================
+ 
+PRIM DUP
+    LDW  A, [{DSP}]
+    SUBI {DSP}, #2
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM DROP
+    ADDI {DSP}, #2
+END-PRIM
+ 
+PRIM SWAP
+    LDW  A, [{DSP}]
+    LDW  B, [{DSP} + #2]
+    STW  A, [{DSP} + #2]
+    STW  B, [{DSP}]
+END-PRIM
+ 
+PRIM OVER
+    LDW  A, [{DSP} + #2]
+    SUBI {DSP}, #2
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM ROT
+    LDW  A, [{DSP} + #4]
+    LDW  B, [{DSP} + #2]
+    STW  B, [{DSP} + #4]
+    LDW  B, [{DSP}]
+    STW  B, [{DSP} + #2]
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM NIP
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM TUCK
+    LDW  A, [{DSP}]
+    LDW  B, [{DSP} + #2]
+    STW  A, [{DSP} + #2]
+    SUBI {DSP}, #2
+    STW  B, [{DSP}]
+END-PRIM
+ 
+PRIM 2DUP
+    LDW  A, [{DSP}]
+    LDW  B, [{DSP} + #2]
+    SUBI {DSP}, #4
+    STW  B, [{DSP} + #2]
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM 2DROP
+    ADDI {DSP}, #4
+END-PRIM
+ 
+# ============================================================
+# 算術演算
+# ============================================================
+ 
+PRIM PLUS
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    ADD  B, A
+    STW  B, [{DSP}]
+END-PRIM
+ 
+PRIM MINUS
+    LDW  B, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  A, [{DSP}]
+    SUB  A, B
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM STAR
+    ; 16bit乗算: JSRでランタイムルーチンを呼ぶ
+    ; _FORCE_MUL はコードジェネレータがファイル先頭に生成する
+    JSR  _FORCE_MUL
+END-PRIM
+ 
+PRIM NEGATE
+    LDW  A, [{DSP}]
+    LDW  B, #0
+    SUB  B, A
+    STW  B, [{DSP}]
+END-PRIM
+ 
+PRIM ABS
+    LDW  A, [{DSP}]
+    CMPI A, #0
+    BGE  _abs_done
+    LDW  B, #0
+    SUB  B, A
+    STW  B, [{DSP}]
+_abs_done:
+END-PRIM
+ 
+PRIM MAX
+    ; ( a b -- max(a,b) )  TOS=b NOS=a
+    LDW  A, [{DSP}]         ; A = b (TOS)
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]         ; B = a (NOS)
+    CMP  A, B               ; b - a: N=1 if b < a
+    BGE  _max_done          ; b >= a → max=b, store b
+    MOV  A, B               ; else max=a
+_max_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM MIN
+    ; ( a b -- min(a,b) )  TOS=b NOS=a
+    LDW  A, [{DSP}]         ; A = b (TOS)
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]         ; B = a (NOS)
+    CMP  A, B               ; b - a
+    BLT  _min_done          ; b < a → min=b, store b
+    MOV  A, B               ; else min=a
+_min_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM ONE-PLUS
+    LDW  A, [{DSP}]
+    ADDI A, #1
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM ONE-MINUS
+    LDW  A, [{DSP}]
+    SUBI A, #1
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM TWO-STAR
+    LDW  A, [{DSP}]
+    LDW  B, #1
+    SHL  A, B
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM TWO-SLASH
+    LDW  A, [{DSP}]
+    LDW  B, #1
+    SAR  A, B
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM LSHIFT
+    LDW  B, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  A, [{DSP}]
+    SHL  A, B
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM RSHIFT
+    LDW  B, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  A, [{DSP}]
+    SHR  A, B
+    STW  A, [{DSP}]
+END-PRIM
+ 
+# ============================================================
+# 比較演算（TRUE=-1/FALSE=0 標準Forth規約）
+# ============================================================
+ 
+PRIM ZERO-EQ
+    LDW  A, [{DSP}]
+    CMPI A, #0
+    BEQ  _zeq_true
+    LDW  A, #0
+    JMP  _zeq_done
+_zeq_true:
+    LDW  A, #$FFFF
+_zeq_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM ZERO-LT
+    LDW  A, [{DSP}]
+    CMPI A, #0
+    BLT  _zlt_true
+    LDW  A, #0
+    JMP  _zlt_done
+_zlt_true:
+    LDW  A, #$FFFF
+_zlt_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM ZERO-GT
+    LDW  A, [{DSP}]
+    CMPI A, #0
+    BEQ  _zgt_false         ; =0 → false
+    BLT  _zgt_false         ; <0 → false
+    LDW  A, #$FFFF
+    JMP  _zgt_done
+_zgt_false:
+    LDW  A, #0
+_zgt_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM EQ
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    CMP  B, A
+    BEQ  _eq_true
+    LDW  A, #0
+    JMP  _eq_done
+_eq_true:
+    LDW  A, #$FFFF
+_eq_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM NE
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    CMP  B, A
+    BNE  _ne_true
+    LDW  A, #0
+    JMP  _ne_done
+_ne_true:
+    LDW  A, #$FFFF
+_ne_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM LT
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    CMP  B, A
+    BLT  _lt_true
+    LDW  A, #0
+    JMP  _lt_done
+_lt_true:
+    LDW  A, #$FFFF
+_lt_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM GT
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    CMP  B, A
+    BEQ  _gt_false
+    BLT  _gt_false
+    LDW  A, #$FFFF
+    JMP  _gt_done
+_gt_false:
+    LDW  A, #0
+_gt_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM LE
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    CMP  B, A
+    BEQ  _le_true
+    BLT  _le_true
+    LDW  A, #0
+    JMP  _le_done
+_le_true:
+    LDW  A, #$FFFF
+_le_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM GE
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    CMP  B, A
+    BGE  _ge_true
+    LDW  A, #0
+    JMP  _ge_done
+_ge_true:
+    LDW  A, #$FFFF
+_ge_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+# ============================================================
+# ビット演算
+# ============================================================
+ 
+PRIM AND
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    AND  B, A
+    STW  B, [{DSP}]
+END-PRIM
+ 
+PRIM OR
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    OR   B, A
+    STW  B, [{DSP}]
+END-PRIM
+ 
+PRIM XOR
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    XOR  B, A
+    STW  B, [{DSP}]
+END-PRIM
+ 
+PRIM INVERT
+    LDW  A, [{DSP}]
+    NOT  A
+    STW  A, [{DSP}]
+END-PRIM
+ 
+# ============================================================
+# メモリアクセス
+# ============================================================
+ 
+PRIM FETCH
+    LDW  A, [{DSP}]
+    LDW  A, [A]
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM STORE
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]
+    ADDI {DSP}, #2
+    STW  B, [A]
+END-PRIM
+ 
+PRIM CFETCH
+    ; ( addr -- byte )
+    ; A=addr, DSP=X → XをRSにpushしてaddr→Xで読出→X復元
+    LDW  A, [{DSP}]         ; A = addr
+    SUBI SP, #2
+    STW  {DSP}, [SP]        ; RSに現DSP(X)を退避
+    MOV  {DSP}, A           ; X = addr
+    LDB  A, [{DSP}]         ; A = mem8[addr] (zero-extend)
+    LDW  {DSP}, [SP]        ; X = 元のDSP復元
+    ADDI SP, #2
+    STW  A, [{DSP}]         ; TOS = byte
+END-PRIM
+ 
+PRIM CSTORE
+    ; ( byte addr -- )
+    LDW  A, [{DSP}]         ; A = addr
+    ADDI {DSP}, #2
+    LDW  B, [{DSP}]         ; B = byte
+    ADDI {DSP}, #2
+    SUBI SP, #2
+    STW  {DSP}, [SP]        ; RSに現DSP退避
+    MOV  {DSP}, A           ; X = addr
+    STB  B, [{DSP}]         ; mem8[addr] = byte
+    LDW  {DSP}, [SP]        ; DSP復元
+    ADDI SP, #2
+END-PRIM
+END-PRIM
+ 
+PRIM PLUS-STORE
+    ; ( val addr -- )  mem[addr] = mem[addr] + val
+    ; ★v1.1 修正: 旧版は LDW B,[A]; ADD B,B で val を無視し mem を2倍化する
+    ;   バグがあった。CFETCH と同じ X(DSP) 退避イディオムで mem[addr]+=val を実装。
+    LDW  A, [{DSP}]         ; A = addr (TOS)
+    LDW  B, [{DSP} + #2]    ; B = val  (NOS)
+    ADDI {DSP}, #4          ; pop 2語 (addr, val)
+    SUBI SP, #2
+    STW  {DSP}, [SP]        ; RSに現DSP(X)を退避
+    MOV  {DSP}, A           ; X = addr
+    LDW  A, [{DSP}]         ; A = mem[addr]
+    ADD  B, A               ; B = val + mem[addr]
+    STW  B, [{DSP}]         ; mem[addr] = B
+    LDW  {DSP}, [SP]        ; X = 元のDSP復元
+    ADDI SP, #2
+END-PRIM
+ 
+# ============================================================
+# I/O
+# ============================================================
+ 
+PRIM EMIT
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    MOV  B, A
+_emit_wait:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _emit_wait
+    MOV  A, B
+    STB  A, [$FC80]
+END-PRIM
+ 
+PRIM KEY
+    SUBI {DSP}, #2
+_key_wait:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _key_wait
+    LDW  A, [$FC82]
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM ZERO-NE
+    LDW  A, [{DSP}]
+    CMPI A, #0
+    BNE  _zne_true
+    LDW  A, #0
+    JMP  _zne_done
+_zne_true:
+    LDW  A, #$FFFF
+_zne_done:
+    STW  A, [{DSP}]
+END-PRIM
+ 
+# ============================================================
+# リターンスタック操作 (YSD8800: SP = return stack)
+# ============================================================
+ 
+PRIM >R
+    LDW  A, [{DSP}]
+    ADDI {DSP}, #2
+    SUBI SP, #2
+    STW  A, [SP]
+END-PRIM
+ 
+PRIM R>
+    LDW  A, [SP]
+    ADDI SP, #2
+    SUBI {DSP}, #2
+    STW  A, [{DSP}]
+END-PRIM
+ 
+PRIM R@
+    LDW  A, [SP]
+    SUBI {DSP}, #2
+    STW  A, [{DSP}]
+END-PRIM
+ 

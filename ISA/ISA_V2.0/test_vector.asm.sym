@@ -1,0 +1,4 @@
+0010 start
+002f success
+003a irq0_handler
+003f align_handler

@@ -1,0 +1,12 @@
+e060 _FMUL_A
+e062 _FMUL_B
+e064 _FMUL_R
+1200 _FORCE_MUL
+1218 _fmul_loop
+1238 _fmul_skip
+1253 _fmul_done
+125a _DEFER_TMP
+125c _DEFER_DISPATCH
+1261 DEFER_DEFAULT
+1262 WORD_task1_main
+12bd WORD_main

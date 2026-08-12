@@ -1,0 +1,1059 @@
+**scc23 v2.00 設計書**
+
+float(Q8.8) / 定数畳み込み / ポインタ修正 / bool・unsigned IR準備
+
+YSD8800プロジェクト / scc23コンパイラ拡張
+
+版数: v2.7　　日付: 2026-06-26　　ステータス: scc23 v2.00実装はStep 1〜10全完了（確定）。**§9.2 peephole最適化を scc23 v2.01 として実装・全検証完了（§9.2.10 実装結果追加・§9.2冒頭を実装完了へ改版）。** 絶対ゲート -O0-strict 826/48405/P:20 不変維持、-O1 で cycles 48405→48055。実装済コンパイラ scc23_v2_01.c。
+
+# **改版履歴**
+
+| **版数** | **日付** | **変更内容** | **担当** |
+| --- | --- | --- | --- |
+| v1.0 | 2026-04-25 | 初版作成（float/定数畳み込み/bool・unsigned IR準備） | Claude |
+| v1.1 | 2026-04-25 | 有識者レビュー反映：__fmul 8ループ化・__fdiv restoring方式・SIR_CONST型管理修正・fold_binop 0除算エラー化・I2Fオーバーフロー仕様明記・O1拡充・F2I(I2F)最適化追加・実装ステップ順序変更 | Claude |
+| v1.2 | 2026-04-25 | 有識者レビュー反映：__fmulキャリー処理ISA非依存化・__fdivのrestore処理削除・F2I(I2F)安全チェック追加・x/2.0→SHRをfloat専用SARに限定・I2Fオーバーフローwarning設計追加 | Claude |
+| v1.3 | 2026-04-25 | 有識者最終レビュー反映：call前spill（has_call/spill_all_registers）・FMUL定数畳み込みoverflow警告・__fmulをborrow方式に修正・__fdiv負数除算仕様明記・-O0-strictオプション追加・暗黙I2F未定義許容明記・実装ステップ順序最終調整 | Claude |
+| v1.4 | 2026-04-25 | 有識者追加コメント反映：__fmul 8ループ設計書明確化・__fdiv 17ループ化（丸め精度向上）・SIR_CMP_LT_S等のA=0/1返し明記・x-x→0をO1追加・peephole布石（ゼロ比較正規化）追加 | Claude |
+| v2.0 | 2026-06-12 | メジャー改版：①ベースをscc23 v1.02に更新（v1.01→v1.02）②--code-org/--data-org/--runtime-orgオプションを前提条件・コンパイルオプション節に追記③__fmul/__fdivをオンデマンド出力方式に変更（g_use_fmul/g_use_fdivフラグ）④float_runtime23.asm別ファイルリンク案を廃止⑤ランタイム管理節全面書き直し⑥バージョン管理表更新 | Claude |
+| v2.1 | 2026-06-22 | 実装ベースをscc23 v1.04へ更新（(B)案・最新ソース対応）。実体照合(KY34/39)による是正を反映：①ISA2.3非実在命令(即値シフトSAR/SHL/SHR #imm・CMPU/BLTU)を全廃しレジスタ経由形・cc_mul実体流儀へ是正(§6.2/6.4/6.5)②__fmul/__fdivワークをcc_mul/cc_div領域と共用しC_MUL_PRE新規確保を廃止($DBE8-$DBFF満杯のため・案A)③__fmul borrow方式を32bit中間シフト加算へ再設計(符号付き命令でのキャリー検出問題回避)④比較命令SIR_CMP_*_Sリネームは見送り(v1.04実体は既にA=0/1返し済・bool布石でfloat不要・退行リスク)⑤SIR_SHRリネーム不要(実体にSIR_SHR/SIR_SAR既存)。新節§2.5追加。 | Claude |
+| v2.2 | 2026-06-22 | -O0-strictの意味を拡張：定数畳み込み(fold_binop)も含め「コードを変える最適化」を全てOFFにする回帰運用向けスイッチとする。目的はDhrystone等の絶対ゲートを-O0-strictビルドでv1.04相当=ゲート値不変に保つこと。型変換正規化(I2F/F2I挿入)はfloatの必須意味論のため-O0-strictでも維持(floatを使わないプログラムでは登場しないためゲートに影響なし)。§2.3オプション表・§7.1の「O0常時」記述を修正、新節§2.5.7追加。 | Claude |
+| v2.3 | 2026-06-24 | Step 7（floatランタイム）実装確定・emu23実機検証反映。新節§2.5.8追加（本節が§2.5.2/2.5.3/§6.4/§6.5に優先）：①_fdiv引数逆転バグ修正（emit規約A=right/B=leftに対し_fdivが逆前提→入口でWN←B,WD←A読み替え。SIR_DIV正常との対比で真因特定）②_fmul/_fdivのX破壊バグ修正（ループカウンタXがフレームポインタを破壊→PUSH X/POP Xでcallee-save化。has_call spillは不要と確定）③確定ワーク割当・確定アルゴリズム記録④Step 8 Dhrystone絶対ゲート回帰結果（v1.04とbyte-exact一致・826/48405/P:20一致）を記録。 | Claude |
+| v2.4 | 2026-06-25 | Step 8〜10実装完了・emu23総合結合テスト反映。新節§2.5.9追加（本節が優先）：①Step8不要ノード削除pass(SIR_NOP/同型CAST除去、F2I(I2F)除去は安全側で見送り)実装・emit透過によりバイナリ不変②Step9 O1代数簡約(x*0/x*1.0/x/1.0/x+0/x-0/x-x、副作用ガードhas_side_effect付き、x*2.0/x÷2.0シフトは見送り)実装③Step10総合結合テストで既存バグ捕捉・修正：SIR_CALLノード型がT_INT固定で関数float戻り値が二重I2F昇格→関数シンボルから戻り値型を引くよう是正(call型伝播)④Dhrystone絶対ゲート全Step後もbyte-exact維持(826/48405/P:20)⑤§9に既知制約(C-3:float関数前方宣言なし呼び出しはT_INTフォールバック)追記。 | Claude |
+| v2.5 | 2026-06-25 | §9.2「peephole最適化 O1繰り上げ計画（レビュー中・未実装）」を追記。opt_level再定義(peephole=O1)・絶対ゲートは-O0-strict維持/-O1新基準・P2(冗長MOV除去)から段階導入・実装方式(命令列バッファ化)・リスク(P1スタック往復除去は高リスク)・検証計画・v2.01確定時の改版予定を計画として記録。**本節は計画段階でscc23実コードには未反映。コンパイラ版数はv2.00のまま。** 有識者レビュー用。 | Claude |
+| v2.6 | 2026-06-25 | レビュー指摘書v1.1（M-1〜M-4・E-1〜E-3）を§9.2.9として反映。KY34に従い現行scc23 v2.00の実 emit をDhrystoneで実測：スタック退避はSUBI SP/STW形が実体(PUSH/POP形でない)・MOV A,B直後dead store 59/132(45%)・P1往復197回を確認。①M-1: P2対象をdead store除去(P2a完全同一連続/P2b直後上書き)へ実体ベース再定義②M-2: 3トラック(strict/-O0/-O1)の不変可変を明記③M-4: P1のSP判定にSP相対[SP+imm]・JSR/RET介在検出を具体化④E-1: §7.5/§9.1にO1繰上げ検討中の相互参照注記を追記⑤E-2: 版数台帳更新を改版予定に追加⑥E-3: 導入順①P2②P3③P1④P4を明示。**計画段階・実コード未反映・コンパイラ版数v2.00のまま。** | Claude |
+| **v2.7** | **2026-06-26** | **§9.2 peephole最適化を scc23 v2.01 として実装・全検証完了。** ①§9.2冒頭の「計画段階・未実装」警告を実装完了ステータスへ改版（旧文は取り消し線で経緯保存・KY41）。②§9.2.10「実装結果」を新設: 実装方式は方式B（関数生成区間のみ命令ストリームバッファ化）、P2a（完全同一連続MOV削除・MOVフラグ不変ゆえ無条件安全）＋P2b（dead store除去・方針Y超保守ホワイトリスト・完全隣接/source A出現/フラグ意味論の3ガード）を実装、P3/P1/P4は未実装（将来）。③検証 §9.2.7 全6項PASS: 絶対ゲート -O0-strict 826/48405/P:20完全一致、-O0/-O0-strict命令列byte不変、-O1でdead store 63命令削除・cycles 48405→48055(-350)・826→832/sec・P:20不変、float/代数簡約回帰(命令列不変・emu23実行全結果一致)、KY41 4点整合リネーム完了。④既知メモ: Dhrystone bin MD5はリンク手順差でHANDOVER値と不一致だがサイズ21846・実行値一致＝機能等価(要精査)。⑤tool_version_ledger v1.6→v1.7（scc23 v1.04→v2.01是正）。実装済コンパイラ scc23_v2_01.c。 | Claude |
+
+# **1. 概要**
+
+## **1.1 目的**
+
+scc23 v1.02をベースとし、以下の機能を追加・整備したscc23 v1.10を実装する。v1.02で実装されたベースアドレス引数化（--code-org/--data-org/--runtime-org）およびオンデマンドランタイム出力機構を前提とした設計に改訂する（v2.0メジャー改版）。
+
+- **float型（Q8.8固定小数点）**の言語サポートおよびコード生成
+
+- **定数畳み込み（O0）**：全コンパイルで常時有効。float対応・オーバーフロー警告込み
+
+- **型変換正規化**：I2F / F2Iノード挿入。オーバーフロー警告・暗黙I2F未定義仕様明記
+
+- **不要ノード削除（軽微）**：SIR_NOP・同型CAST・F2I(I2F)安全範囲内除去（-O0-strict時は無効）
+
+- **call前spillルール**：__fmul/__fdiv呼び出し前のレジスタ退避（has_call方式）
+
+- **__fmul/__fdivオンデマンド出力**：g_use_fmul/g_use_fdivフラグ方式。v1.02のcc_mul等と同一パターン
+
+- **bool / unsigned向けIR準備**：IRオペコードを予約。今回は未実装
+
+## **1.2 バージョン管理**
+
+| **ファイル** | **旧バージョン** | **新バージョン** | **変更内容** |
+| --- | --- | --- | --- |
+| scc23_v2_00.c | ~~v1.02をベースに新規~~ → **v1.04をベースに新規（v2.1是正）** | v2.00 | float/定数畳み込み。ポインタ修正はv1.01で完了済のため対象外。bool・unsigned IR準備 |
+| float_runtime23.asm | —（廃止） | — | v2.0でオンデマンドインライン出力に変更。別ファイルなし |
+| toolchain23_design.docx | v1.2 | v1.3 | float仕様・最適化レベル追記 |
+
+**⚠ **float_runtime23.asm（別ファイルリンク案）はv2.0で廃止。__fmul/__fdivはscc23本体からオンデマンドインライン出力する。
+
+## **1.3 関連文書**
+
+| **文書名** | **版数** | **内容** |
+| --- | --- | --- |
+| ISA2_3_v231.docx | v2.3.1 | YSD8800 ISA2.3仕様（CMPU/BLTU有無確認要） |
+| ~~scc23_v1_02.c~~ scc23_v1_04.c | ~~v1.02~~ **v1.04（v2.1是正）** | 実装ベース。--code-org/--data-org/--runtime-orgオプション・オンデマンド出力機構実装済。memmap v2.4対応(Cプロセス区画$D400-$DBFF) |
+| scc23_baseorg_mod_design_v1_1.md | v1.1 | ベースアドレス引数化設計（承認済み） |
+| yuios_cproc_layout_design_v1_1.md | v1.1 | Cプロセス2KB区画レイアウト（承認済み） |
+| YSD8800_ABI_spec.docx | v1.0 | YSD8800 C ABI仕様（呼び出し規約・データモデル） |
+| toolchain23_design_v1_2.docx | v1.2 | ISA2.3ツールチェーン設計書 |
+
+## **1.4 本計画のロードマップ上の位置づけ**
+
+本設計は有識者との相談結果に基づく独立した改良計画であり、現在進行中のYSD8800プロジェクトのロードマップ（Ph.5 ProcMgr等）にはまだ組み込まれていない。ロードマップへの正式組み込みは別途指示を受けて実施する。
+
+~~**v2.0前提条件：**scc23 v1.02（--code-org/--data-org/--runtime-orgオプション・オンデマンド出力機構実装済み）をベースとして使用する。実装時はv1.02ソース（scc23_v1_02.c）からv2.00（scc23_v2_00.c）を作成すること。~~
+
+**【v2.1是正】前提条件：**実装ベースを **scc23 v1.04**（scc23_v1_04.c・2026-06-17・memmap v2.4 案D-ε対応済／Cプロセス区画 $D400-$DBFF・ランタイムワーク $DBE8-$DBFF）に更新する。v1.04 は v1.02 の --code-org 等オプション・オンデマンド出力機構を継承し、さらに memmap v2.4 移設・ワーク変数移設を含む。実装時は scc23_v1_04.c から scc23_v2_00.c を作成すること。設計書本文中で v1.02 を前提とした擬似コード（特に§6.2/6.4/6.5 のアセンブリ・§6.4 の C_MUL_PRE）は §2.5 の是正に従って読み替えること。
+
+# **2. 前提・制約**
+
+## **2.1 ハードウェア制約**
+
+- YSD8800はFPUを持たない。floatはすべてソフトウェア処理
+
+- 汎用レジスタ：A（主レジスタ）、B（補助）、X（フレームポインタ）、SP
+
+- MUL/DIV命令なし（乗除算はランタイム関数で実装）
+
+- SAR命令あり（ISA2.3）→ F2I・x/2.0最適化に使用
+
+- CMPU/BLTU命令の有無は実装時にISA2_3_v231.docxで確認。なければ減算borrow方式を採用
+
+- レジスタ割付（RA）なし → call前spillで保守的に対応（本格RAはO2フェーズで検討）
+
+## **2.2 float型の仕様と制限**
+
+| **項目** | **内容** |
+| --- | --- |
+| 内部表現 | int16_t（Q8.8固定小数点）。IEEE754ではない |
+| 範囲 | 約 -128.0 ～ +127.996（整数部8bit・小数部8bit） |
+| 精度 | 最小分解能 ≒ 0.00390625（= 1/256） |
+| NaN/Inf | 非対応。演算結果がオーバーフローした場合の動作は未定義 |
+| sizeof | 2（intと同一。ABIの変更なし） |
+| 戻り値レジスタ | Aレジスタ（既存ABI準拠） |
+| printf対応 | %f書式非対応（本設計スコープ外） |
+| I2Fオーバーフロー | 整数値が -128〜+127 範囲外でI2Fを実行した場合、動作は未定義。コンパイル時定数の場合はwarningを出力（§5.3） |
+| 暗黙I2F（int op float） | 暗黙型昇格によるI2Fでもオーバーフロー時は未定義を許容する仕様（§5.4） |
+| FMUL定数畳み込み | 中間値がint32_t範囲を超えた場合はoverflow warningを出力（§7.2） |
+| fdiv負数除算 | 負数numeratorまたはdenominatorが入力された場合の動作は未定義。符号分離して絶対値演算すること |
+
+## **2.3 コンパイルオプション**
+
+v1.02で追加されたベースアドレス指定オプションと、v1.10で追加する最適化オプションを合わせて整理する。
+
+| **オプション** | **動作** |
+| --- | --- |
+| --code-org <addr>（v1.02追加） | CODEセクションの配置アドレス。形式: 0xXXXX / $XXXX / 裸16進。省略時は$0400（後方互換） |
+| --data-org <addr>（v1.02追加） | DATAセクションの配置アドレス。省略時は$4000（後方互換） |
+| --runtime-org <addr>（v1.02追加） | RUNTIMEセクションの配置アドレス。省略時は$0100（後方互換） |
+| -O0（デフォルト） | 定数畳み込み・型変換正規化・不要ノード削除・F2I(I2F)安全範囲内最適化を有効化 |
+| -O0-strict | ~~一切の最適化・ノード削除を無効化。デバッグ用~~ **【v2.2拡張】定数畳み込み(fold_binop)を含む「コードを変える最適化」を全てOFF。不要ノード削除も無効。型変換正規化(I2F/F2I挿入)のみfloat必須意味論として維持。デバッグ用＋回帰運用用(Dhrystone等の絶対ゲートをv1.04相当=ゲート値不変でビルドする)** |
+| -O1 | O0に加え、代数簡約（x*0、x+0、x/1.0、x*2.0[T_FLOAT専用]等）を追加有効化 |
+
+**※ **--code-org等のアドレス指定はシェル変数展開の影響を避けるため $XXXX 形式より 0xXXXX 形式を推奨（scc23_baseorg_mod_design_v1_1.md C-2参照）。
+
+## **2.5 v1.04ベース化に伴う実体照合・是正（v2.1新設）**
+
+本節はv2.1改版で新設。実装ベースをscc23 v1.04へ更新したことに伴い、scc23_v1_04.c実体およびISA2_3_v231.docxとの照合(KY34/39)で判明した本文擬似コードの不適合を是正する。**本節の記述が§6.2/§6.4/§6.5/§4.1a/§4.2の旧擬似コードに優先する。**
+
+### **2.5.1 ISA2.3命令照合結果（重大・是正必須）**
+
+ISA2_3_v231.docx照合により、本文の一部擬似アセンブリがISA2.3に存在しない命令・表記を使用していることが判明した。以下に是正方針を示す。
+
+| **本文の表記** | **ISA2.3での実在** | **是正** |
+| --- | --- | --- |
+| SAR A, #8（即値シフト） | 非存在。SARは `SAR rD,rS`(0x59・rD>>=(rS&0xF))のみ | `LDW B,#8; SAR A,B` のレジスタ経由形へ |
+| SHR B,#8 / SHL A,#8（即値シフト） | 非存在。SHL/SHRも `rD,rS` のみ | レジスタ経由形へ |
+| CMPU / BLTU（符号なし比較） | **非存在**（§2.1の確認事項に対する結論） | 符号なし比較は不使用。borrow方式を§2.5.3で再設計 |
+| STW A, C_MUL_BASE（直接アドレス） | STWは `STW rS,[imm16]`(0x23)・角括弧必須 | `_C_xxx EQU $addr` ラベル定義＋`STW A,[_C_xxx]` 形へ |
+| __fmul / __fdiv（先頭_2個） | hasm23ラベル規則に合わせ `_fmul`/`_fdiv`(_1個)推奨 | ラベル名是正（実装時hasm23規則確認） |
+
+ランタイムは v1.04 の _cc_mul/_cc_div と同一の emit 流儀（`_C_xxx EQU`＋`[]`間接＋レジスタ経由シフト）で全面的に書き直す。**§6.4/§6.5の擬似アセンブリはそのまま採用しない。**
+
+### **2.5.2 ワーク領域：C_MUL_PRE新規確保を廃止しcc_mul/cc_div領域を共用（案A・承認済）**
+
+v1.04実体のCプロセス区画ワーク領域 **$DBE8〜$DBFF（24B）は満杯**であり、§6.4が要求する新規C_MUL_PRE(2B)の連続空きが存在しない。
+
+| アドレス | 用途 |
+| --- | --- |
+| $DBE8-$DBED | inc/dec/strcpy/strcmp (C_XSAVE/C_TMP/C_TMP1) |
+| $DBEE-$DBF3 | memcpy dest/src/cnt |
+| $DBF4-$DBF9 | cc_mul A/B/R (C_MUL_BASE系) |
+| $DBFA-$DBFF | cc_div A/B/Q (C_DIV_BASE系)・末尾詰め |
+
+**是正（案A・承認済）：**float用 _fmul/_fdiv は整数 cc_mul/cc_div のワーク（$DBF4-$DBFF）を共用する。float乗除算と整数乗除算は同一式中で同時ネストせず（型が異なり、call前spillでB/X退避するためワーク破壊は発生しない）、ワーク変数は関数内完結利用のため共用可能。**新規ワーク0バイト。memmap v2.4・emu23_device_design の改版は不要。**
+
+**⚠ **共用にあたり、_fmul/_fdiv が cc_mul/cc_div と同一式でネストしないことを実装時に確認すること（float×float の中に int×int が混在する式では、内側評価完了後に外側がワークを使うため逐次利用となり衝突しないが、生成asm目視で確認する）。
+
+### **2.5.3 __fmul アルゴリズム再設計（borrow方式のISA非依存化）**
+
+§6.4のborrow方式は符号なしオーバーフロー検出にCMP+BGEを用いるが、ISA2.3のBLT/BGEは符号付き(N flag)判定でありキャリー検出に使えない。Q8.8の `(a*b)>>8` は16×16→32bit相当の積（上位8bitが結果に効く）が必要。
+
+**是正方針：**部分積を hi/lo の2ワードで保持するシフト加算とし、桁上がりは符号付き命令で正しく検出できる方法（最上位ビット抽出 等）で実装する。**アルゴリズムの正しさを最優先**とし、実装Step（§8 Step7）で単体テスト（1.5*2.0=3.0 ⇔ 0x0180×0x0200>>8=0x0300、3.0/1.5=2.0）に合格してから本体へ組み込む。ループ数・具体命令列は実装時に確定し、確定後にv2.2で本節へ追記する。
+
+### **2.5.4 比較命令リネーム（SIR_CMP_*_S）は本v2.00では見送り（承認済）**
+
+§4.1a/§4.2はSIR_LT等→SIR_CMP_LT_S等へのリネームを要求するが、v1.04実体の比較命令は**既にAレジスタへ0/1を返す形式**（true側 `LDW A,#1`／false側 `LDW A,#0; JMP _end`）であり、§4.1aの「A=0/1返し」要件は**実装済**。未実施はオペコード名称変更のみで、これは(1)動作影響ゼロ(2)bool実装の布石でありfloat実装には不要(3)enum・parser・emit_expr全switch-caseに波及し退行リスクがある。よって**本v2.00ではリネームを見送り**、SIR_LT等の現名称を維持する。SIR_CMP_*_U（符号なし）も予約見送り。リネームは将来bool型実装時に別途実施する。
+
+### **2.5.5 SIR_SHRリネーム不要（実体に2本立て既存）**
+
+§4.2はSIR_SHR→SIR_SHR_Sリネームを要求するが、v1.04実体には既に SIR_SHR（論理右シフト）と SIR_SAR（算術右シフト・符号保存・P6で追加）が**別個に存在**する。設計書のSIR_SHR_S相当はSIR_SARとして実装済。よってリネーム不要。F2I は既存 SIR_SAR を使用する。
+
+### **2.5.6 オンデマンド出力の実体流儀（軽微）**
+
+§6.3はemit_fmul_runtime()等の別関数を想定するが、v1.04実体はemit_runtime()内に直接emit()を並べる流儀（`if(g_use_mul){...}`）。float も emit_runtime() 内に `if(g_use_fmul){...}` / `if(g_use_fdiv){...}` ブロックを追加する形に合わせる。機能は§6.3と同一。
+
+### **2.5.7 -O0-strict拡張：定数畳み込みOFF（v2.2・回帰運用向け）**
+
+v2.2で-O0-strictの意味を拡張した。背景は回帰運用上の要請である。
+
+**課題：**定数畳み込み(fold_binop)はv1.04に存在しなかった新挙動であり、畳み込み対象の定数式を含むプログラムでは生成コード・binサイズが変わる。Dhrystone等の絶対ゲート(56416バイト・826/48405/P:20)を持つ回帰テストでは、畳み込みの有無でゲート値が変動し得る。
+
+**方針(承認済)：**-O0-strict を「**コードを変える最適化を全てOFFにし、純粋にv1.04相当のコード生成を行う**」スイッチに拡張する。
+
+| 項目 | -O0(既定) | -O0-strict(v2.2拡張) |
+| --- | --- | --- |
+| 定数畳み込み(fold_binop) | 有効 | **無効** |
+| 不要ノード削除(NOP/同型CAST/F2I(I2F)) | 有効 | 無効 |
+| 代数簡約(O1機能) | 無効(O1で有効) | 無効 |
+| 型変換正規化(I2F/F2I挿入) | 有効 | **有効(維持)** |
+
+**型変換正規化を維持する理由：**I2F/F2Iの挿入はfloatを正しく計算するための必須意味論であり「最適化」ではない。これを消すとfloat演算自体が壊れる。ただしfloatを使わないプログラム(Dhrystone等)ではI2F/F2Iは登場しないため、-O0-strictでのDhrystoneビルドはv1.04と完全一致し、ゲート値は不変となる。
+
+**実装：**try_fold()呼び出し箇所に `if (g_opt_level != OPT_O0_STRICT)` ガードを追加する(small change)。emit層の不要ノード削除も同ガードに従う。
+
+**回帰運用：**絶対ゲート検証時は `scc23 -O0-strict ...` でビルドし、v1.04基準binとの完全一致を確認する。最適化版の検証は別途-O0/-O1で行う。
+
+### **2.5.8 Step 7 _fmul/_fdiv 実装確定・バグ修正記録（v2.3・2026-06-24）**
+
+本サブ節はv2.3改版で新設。Step 7（floatランタイム実装）でのemu23実機検証により判明・是正した2件のバグと、確定したワーク割当・呼出規約を記録する。**本節の記述が§2.5.2/§2.5.3および§6.4/§6.5の旧記述に優先する（KY41 append-only：旧記述は参照用に保持）。**
+
+**(A) _fdiv 引数逆転バグ（除算が逆数になる）— 修正済**
+
+- 症状：`a/b` の結果が逆数（b/a相当）。例 `3.0/1.5`→0x0080(=0.5、期待0x0200=2.0)。乗算(_fmul)は可換のため露見せず、非可換の除算でのみ露見した。
+- 真因：emit_expr の評価規約は SIR_MUL/DIV/FMUL/FDIV すべて共通で「left→push、right→評価(A)、pop B」であり、**JSR時点で A=right, B=left**。整数 _cc_div はこの規約に対し「A=除数, B=被除数」を前提に書かれており `a/b` で正しく動く。一方 _fdiv だけが入口で「A=被除数, B=除数」という**逆の前提**で WN←A, WD←B と読み込んでいた。
+- 是正：_fdiv 入口で **WN(被除数)←B, WD(除数)←A** に読み替え（A↔Bスワップ）、0除算チェックも除数=A に対して行う。emit側（case SIR_FDIV）は無改変（SIR_DIVと同一規約で整合するため）。
+- 検証：emu23で全8境界ケース（3.0/1.5・3.0/2.0・1.0/4.0・10.0/2.0・-3.0/1.5・-6.0/-2.0・100.0/10.0・127.0/1.0）完全一致。0除算は商0返し。
+- 教訓：emit評価規約の非可換性を _fmul(可換)で見落とし _fdiv で露見。SIR_DIV(整数・正常)と SIR_FDIV の emit/ランタイム入口規約を必ず対比すること。「cc_divと_fdivの入口規約が同一」という思い込みは誤り（実際は真逆）。
+
+**(B) _fmul/_fdiv による X(フレームポインタ)破壊 — callee-save化で修正済**
+
+- 症状：単一式（`a*b`・`a/b`）は正常だが、_fmul/_fdiv を2回以上呼ぶネスト式（`a*b+c*d`・`a/b/c`・`(a/b)*(c/d)` 等）や、呼出後にローカル変数を再読みする式が全滅。
+- 真因：_fmul・_fdiv はループカウンタに **X レジスタを使用**（`LDW X,#0`〜`ADDI X,#1`）し破壊する。生成コードはローカル変数を `[X + #offset]` で参照するため、JSR後にXが壊れると以降の変数アクセスが全て誤る。整数 _cc_mul/_cc_div がネストで正常なのはX不使用（メモリワークのみ）のため。
+- 是正：_fmul/_fdiv を **callee-save 化**。入口（`_fmul:`/`_fdiv:` ラベル直後）に `PUSH X`、全RET直前に `POP X`（_fmul:1箇所、_fdiv:2箇所＝0除算早期RET＋最終RET）。`POP X` は戻り値A・スタック整合に影響しない。`PUSH X`/`POP X` のISA2.3実在は hasm23 で事前確認済。
+- 補足：§6.1 の has_call spill（emit側でのレジスタ退避）は**実装不要**と確定。emit側は中間結果をスタックspillしており、唯一の漏れがランタイム側のX破壊だったため、ランタイムのcallee-saveで解決した。
+- 検証：ネスト式6ケース・混在式（int×float）5ケース・純int乗除算回帰3ケース、全PASS（NG=0）。
+
+**(C) 確定ワーク割当（§2.5.2 案Aの実装確定値）**
+
+| ルーチン | ワーク変数（実装確定） |
+| --- | --- |
+| _fmul | WA=$DBF4(C_MUL_A), WB=$DBF6(C_MUL_B), WR=$DBF8(C_MUL_R), WSIGN=$DBFA(C_DIV_A借用) |
+| _fdiv | WN=$DBF4(C_MUL_A), WD=$DBF6(C_MUL_B), WQ=$DBF8(C_MUL_R), WR=$DBFA(C_DIV_A), WSIGN=$DBFC(C_DIV_B) |
+
+cc_mul/cc_div領域（$DBF4-$DBFF）共用。§2.5.2の「同一式でネストしないこと」をemu23実機の混在式テスト（④）で検証し、中間結果がスタック+A/Bレジスタ経由で受け渡されるため衝突しないことを立証。新規ワーク0バイト・memmap改版不要を確定。
+
+**(D) 確定アルゴリズム（emu23検証済・NG=0）**
+
+- _fmul（Q8.8乗算 r=(a*b)>>8）：符号分離＋ビットごと可変シフト累算（i=0..15: WB&1なら i>=8でWR+=WA<<(i-8)、else WR+=WA>>(8-i)）。NEG非実在のためNOT+ADDI #1で2の補数。
+- _fdiv（Q8.8除算 r=(a<<8)/b）：符号分離＋24ループ長除算（前半16=被除数MSB供給、後半8=0供給。各ループ WR=(WR<<1)|bit; WQ<<=1; WR>=WDなら WR-=WD,WQ|=1）。0除算は商0返し。
+
+**(E) Step 8 Dhrystone絶対ゲート回帰結果（2026-06-24）**
+
+scc23 v2.00（上記(A)(B)修正反映後）で Dhrystone をビルドし、v1.04ビルドと **byte-exact一致（MD5 c9ed1e78…、21846バイト）**、性能値 **826 Dhrystones/sec / cycles=48405 / P:20** 完全一致を確認。floatを使わないDhrystoneでは g_use_fmul=g_use_fdiv=0 でランタイム未出力・SIR_FDIVパス未通過のため、修正は構造的に無影響。絶対ゲート不変を立証。
+
+### **2.5.9 Step 8〜10 実装確定・既存バグ修正記録（v2.4・2026-06-25）**
+
+本サブ節はv2.4改版で新設。Step 8（不要ノード削除pass）・Step 9（O1代数簡約）・Step 10（総合結合テスト）の実装確定事項と、Step 10で捕捉した既存バグの是正を記録する。**本節の記述が§7.1/§7.3/§7.4の旧記述に優先する（KY41 append-only：旧記述は参照用に保持）。**
+
+**(A) Step 8 不要ノード削除pass（実装確定）**
+
+- 実装：`elim_redundant()` を emit_expr 入口に追加。同型CAST（`SIR_CAST` かつ `n->left->type==n->type`）とSIR_NOPラッパを素通し。`g_opt_level==OPT_O0_STRICT` 時は無効。
+- **F2I(I2F(x)) 除去は安全側で見送り（§7.4 opt_cast_cancel/is_safe_range は不実装）。** 理由：変数は範囲を静的保証できず除去不可。範囲外整数のI2Fオーバーフロー挙動（例 (int)(float)200 → -56=0xFFC8）を温存する必要があり、単純除去は現状挙動を破壊する。定数は既存の定数畳み込みで処理されるため独立passの追加効果が小さい。emu23でベースライン（10→10安全 / 200→-56範囲外 / 1.5→切捨）を実測し判断。
+- 効果：emitは元々SIR_CAST（`emit_expr(left)`のみ・コード非生成）/SIR_NOP（何もしない）を透過処理するため、本passは**バイナリ出力不変**（回帰原理的になし）。IRツリー正規化が目的（後続O1簡約が余計なノードに惑わされないため）。
+
+**(B) Step 9 O1代数簡約（実装確定）**
+
+`fold_algebraic()` を binop_promote の int経路・float経路に `OPT_O1` 時のみ作動するよう組込み。実装パターン：
+
+| 簡約 | 条件 |
+| --- | --- |
+| x*0 / x*0.0 → 0 | 捨てる側Lに副作用なし |
+| x*1.0(FMUL R=256) → x | — |
+| x/1.0(FDIV R=256) → x | — |
+| x+0 / x-0 → x | — |
+| x-x → 0 | 両辺が同一単純シンボル(SIR_SYM) |
+
+- **x*2.0→SHL / x/2.0→SAR（§7.1表のfloat専用シフト最適化）は見送り。** 理由：式中へのSHL/SAR挿入の新emit経路とレジスタ規約整合の検証コストが、×2/÷2限定の効果に見合わない。
+- 安全策：`has_side_effect()`（SIR_CALL/STORE/ASGN_OP を後順再帰検出）で、簡約により捨てられる側に副作用があれば簡約しない。`x-x→0` は同一SIR_SYMのみ（複雑式の構造比較はせず誤判定回避）。
+- 検証：`g()*0`でgg=99（副作用保持）、O0非簡約（asmで_cc_mul残存=O1:0回/O0:1回）、Dhrystone byte-exact維持。
+
+**(C) Step 10 総合結合テストで捕捉した既存バグ：SIR_CALL戻り値型のT_INT固定（修正済）**
+
+- 症状：`float返し関数() + 定数`（例 `f()+1.0`、f返り値2.5）が 0x8100 等の異常値。両opt levelで同症状（最適化バグではなく構造バグ）。
+- 真因：parse_primary で **SIR_CALLノードの型を無条件 `cn->type=T_INT` に固定**していた。関数の実戻り値型（float）を伝播せず、float返し関数が int 扱い → float演算で binop_promote が「int+float混在」と誤判定 → 戻り値に二重I2F（<<8）昇格 → `0x0280(2.5)<<8 = 0x8000` に化けていた。
+- 是正：①関数定義で `fs->base` も記録（戻り値base伝播）②call時に `sym_find(name)` で関数シンボルを引き `cn->type=cfs->type; cn->base=cfs->base` を設定。未定義（前方宣言なし）の場合のみ T_INT フォールバック。
+- 検証：バグケース6種・int返し関数回帰3種・`(float)gi()`明示キャスト・総合結合テスト3本（-O0/-O1）全PASS。Dhrystone byte-exact維持（Dhrystoneはfloat戻り値混在なしのため影響なし）。
+- 教訓（KY）：call戻り値型×演算文脈のマトリクステストが不足し、Step1〜9の単体テストをすり抜けた。次回回帰スイートに追加すべき（§9 既知の技術的負債C-1）。
+
+**(D) Step 10 総合結合テスト結果（NG=0）**
+
+| プログラム | 内容 | -O0 | -O1 |
+| --- | --- | --- | --- |
+| ループ内float累算+関数 | accum(0.0,0.5,5)=2.5=0x0280 | PASS | PASS |
+| int→float+関数戻り値連鎖 | half((float)10*1.5)+1.0=8.5=0x0880 | PASS | PASS |
+| float平均+条件分岐 | (3+4+5)/3=4.0=0x0400 | PASS | PASS |
+
+**(E) scc23 v2.00 完了確認**
+
+Step 1〜10 全実装完了。float演算（単体・混在・ネスト・関数連携）・O1代数簡約・不要ノード削除passすべてemu23検証済。Dhrystone絶対ゲート（826/48405/P:20・byte-exact）は全Step後も不変。
+
+# **3. 型システム拡張**
+
+## **3.1 ctype_t 列挙型追加**
+
+| **型名** | **enum値** | **sizeof** | **実体** | **備考** |
+| --- | --- | --- | --- | --- |
+| int | T_INT | 2 | int16_t | 既存。符号付き16bit |
+| char | T_CHAR | 1 | int8_t | 既存 |
+| float | T_FLOAT | 2 | int16_t | 新規。Q8.8固定小数点。ABI変更なし |
+| bool | T_BOOL | (予約) | — | 今回未実装。IRノード型予約のみ |
+| uint | T_UINT | (予約) | — | 今回未実装。IRノード型予約のみ |
+
+## **3.2 sizeof定義**
+
+case T_FLOAT:  return 2;  /* Q8.8: int16_tと同サイズ */
+
+case T_BOOL:   return 2;  /* 将来用 */
+
+case T_UINT:   return 2;  /* 将来用 */
+
+# **4. IR（中間表現）拡張**
+
+## **4.1 新規追加オペコード**
+
+| **オペコード** | **意味** | **備考** |
+| --- | --- | --- |
+| SIR_FMUL | A = (A * B) >> 8 | __fmul呼び出し。call前spill必須。g_use_fmul=1でオンデマンド出力 |
+| SIR_FDIV | A = (A << 8) / B | __fdiv呼び出し。call前spill必須。g_use_fdiv=1でオンデマンド出力。負数除算未定義 |
+| SIR_I2F | A = A << 8 | int→float。定数ならコンパイル時畳み込み。最大値制限あり（§5.3） |
+| SIR_F2I | A = A >> 8 (算術) | float→int。SAR A,#8 |
+| SIR_CMP_LT_S | A = (A < B) ? 1 : 0 | 符号付き <。A=0/1返し（FLAGS依存ではない） |
+| SIR_CMP_LE_S | A = (A <= B) ? 1 : 0 | 符号付き <=。A=0/1返し |
+| SIR_CMP_GT_S | A = (A > B) ? 1 : 0 | 符号付き >。A=0/1返し |
+| SIR_CMP_GE_S | A = (A >= B) ? 1 : 0 | 符号付き >=。A=0/1返し |
+| SIR_CMP_EQ | A = (A == B) ? 1 : 0 | 符号共通 ==。A=0/1返し |
+| SIR_CMP_NE | A = (A != B) ? 1 : 0 | 符号共通 !=。A=0/1返し |
+| SIR_CMP_LT_U | A = (A <u B) ? 1 : 0 | 符号なし <（将来用）。A=0/1返し |
+| SIR_CMP_LE_U | A = (A <=u B) ? 1 : 0 | 将来用 |
+| SIR_CMP_GT_U | A = (A >u B) ? 1 : 0 | 将来用 |
+| SIR_CMP_GE_U | A = (A >=u B) ? 1 : 0 | 将来用 |
+| SIR_SHR_S | 算術右シフト（符号付き） | 旧SIR_SHRリネーム。SAR命令 |
+| SIR_SHR_U | 論理右シフト（符号なし） | 将来用。SHRI命令 |
+| SIR_SEXT8_16 | 8→16bit符号拡張 | 将来用 |
+| SIR_ZEXT8_16 | 8→16bitゼロ拡張 | 将来用 |
+
+## **4.1a 比較命令のA=0/1返し（bool実装の布石）**
+
+SIR_CMP_LT_S等の比較命令はすべてAレジスタに0または1を返す。CPUのFLAGSレジスタのみを更新するのではなく、Aに値として格納することでbool型実装への布石となる。
+
+| **命令** | **A=0の場合** | **A=1の場合** |
+| --- | --- | --- |
+| SIR_CMP_LT_S | A >= B | A < B（符号付き） |
+| SIR_CMP_EQ | A != B | A == B |
+| SIR_CMP_LT_U等（将来） | A >=u B | A <u B（符号なし） |
+
+**⚠ **FLAGS依存の実装ではA=0/1の格納を忘れやすい。emit_exprの比較ノード処理で必ず値をAに格納すること。
+
+## **4.2 既存オペコードのリネーム**
+
+| **旧オペコード（v1.02）** | **新オペコード（v1.10）** | **コード生成への影響** |
+| --- | --- | --- |
+| SIR_LT | SIR_CMP_LT_S | なし（emit_expr switch-case更新のみ） |
+| SIR_LE | SIR_CMP_LE_S | なし |
+| SIR_GT | SIR_CMP_GT_S | なし |
+| SIR_GE | SIR_CMP_GE_S | なし |
+| SIR_EQ | SIR_CMP_EQ | なし |
+| SIR_NE | SIR_CMP_NE | なし |
+| SIR_SHR | SIR_SHR_S | なし（SAR命令・既存動作と同一） |
+
+**⚠ ****KY：**リネーム後にgrep旧名称で残存ゼロを確認し、gcc -Wallで未処理caseを検出すること。
+
+## **4.3 SIR_CONSTノードの型管理**
+
+/* 確定仕様 */
+
+ctype_t  type;   /* T_INT / T_FLOAT / T_BOOL / T_UINT */
+
+int16_t  ival;   /* 値。T_FLOATの場合はQ8.8変換済み整数 */
+
+/* is_floatフィールドは廃止。typeフィールドで判定すること */
+
+static int16_t to_fixed(double x) { return (int16_t)(x * 256.0); }
+
+# **5. 型変換・型昇格ルール**
+
+## **5.1 IR生成ルール**
+
+| **パターン** | **生成IR** | **備考** |
+| --- | --- | --- |
+| float op float (+/-) | SIR_ADD / SIR_SUB | Q8.8は整数ADD/SUBと同一 |
+| float * float | SIR_FMUL | __fmulオンデマンド出力（g_use_fmul=1） |
+| float / float | SIR_FDIV | __fdivオンデマンド出力（g_use_fdiv=1） |
+| int op float（暗黙変換） | SIR_I2F(int) → op | int>127の場合はオーバーフロー未定義（§5.4） |
+| float op int（暗黙変換） | SIR_I2F(int) → op | 暗黙I2Fは未定義を許容する仕様 |
+| (float)int_expr | SIR_I2F | キャスト→I2Fノード挿入 |
+| (int)float_expr | SIR_F2I | キャスト→F2Iノード挿入 |
+| float定数 1.5 | SIR_CONST(type=T_FLOAT, ival=384) | コンパイル時 (int)(x*256) 変換 |
+
+## **5.2 emit契約（拡張版）**
+
+| **ノード型** | **Aレジスタ格納値** |
+| --- | --- |
+| int | int16_t（符号付き16bit整数） |
+| float | int16_t（Q8.8固定小数点整数） |
+| char | int16_t（8bit値を16bitに零拡張） |
+
+## **5.3 I2Fオーバーフロー仕様とwarning**
+
+I2F（int→float変換）は内部的にA <<= 8 を実行する。整数値が-128〜+127の範囲外の場合、int16_tの範囲を超えオーバーフローが発生し動作は未定義となる。コンパイル時定数の場合はwarningを出力する。
+
+**⚠ **整数値が -128〜+127 の範囲外でI2Fを実行した場合、動作は未定義。
+
+## **5.4 暗黙I2F（int op float）の仕様**
+
+**⚠ **暗黙I2Fによるオーバーフローは「未定義を許容する仕様」とする。プログラマの責任でfloatの値域内（-128.0〜+127.996）に収まるint値を使用すること。
+
+**※ **例: int a = 200; float b = 1.0; a + b; → I2F(200) → 0x7FFF（オーバーフロー・未定義動作）
+
+# **6. コード生成**
+
+## **6.1 call前spillルール**
+
+__fmul/__fdivはA/B/Xを破壊するランタイム関数である。現設計にはRAがないため呼び出し前に保守的退避を行う。
+
+/* call前spill設計（v1.3から変更なし）*/
+
+static int has_call(sir_node_t *n) {
+
+    if (!n) return 0;
+
+    if (n->op == SIR_FMUL || n->op == SIR_FDIV) return 1;
+
+    if (n->op == SIR_CALL) return 1;
+
+    return has_call(n->left) || has_call(n->right);
+
+}
+
+static void spill_all_registers(void) {
+
+    emit("PUSH B");
+
+    emit("PUSH X");
+
+}
+
+static void restore_all_registers(void) {
+
+    emit("POP  X");
+
+    emit("POP  B");
+
+}
+
+## **6.2 float四則演算のコード生成**
+
+**【v2.1是正】本節の SAR A,#8 / SHL A,#8 等の即値シフト表記はISA2.3に存在しない（§2.5.1）。実装ではレジスタ経由形 `LDW B,#8; SAR A,B`（F2I）/`LDW B,#8; SHL A,B`（I2F）を使用すること。**
+
+| **演算** | **生成コード** | **備考** |
+| --- | --- | --- |
+| float + float | ADD A, B | 整数加算と同一 |
+| float - float | SUB A, B | 整数減算と同一 |
+| float * float | JSR __fmul | g_use_fmul=1。call前spill必須（§6.1） |
+| float / float | JSR __fdiv | g_use_fdiv=1。call前spill必須。非負前提 |
+| I2F | SHL A, #8 | 定数なら畳み込み。範囲外はwarning（§5.3） |
+| F2I | SAR A, #8 | 符号保存右シフト（ISA2.3 SAR命令） |
+
+## **6.3 __fmul/__fdivオンデマンド出力設計（v2.0新規）**
+
+v1.4までの「float_runtime23.asm別ファイルリンク案」を廃止し、scc23 v1.02の**cc_mul/cc_div/cc_modと同一のオンデマンドインライン出力方式**に変更した。floatを使わないプログラム（Dhrystone等）ではランタイムがコードに含まれずサイズが最小になる。
+
+/* ============================================================
+
+ * __fmul/__fdiv オンデマンド出力設計（v2.0・v1.02ベース）
+
+ *
+
+ * 背景:
+
+ *   scc23 v1.02 では cc_mul/cc_div/cc_mod がオンデマンド出力に改修済み
+
+ *   （g_use_mul/g_use_div/g_use_mod フラグ方式）。
+
+ *   v1.10 の __fmul/__fdiv も同じ方式で実装する。
+
+ *   floatを使わないプログラムではランタイムがコードに含まれない。
+
+ *
+
+ * 実装方針:
+
+ *   ① グローバルフラグを追加
+
+ *   ② SIR_FMUL/SIR_FDIVのemit時にフラグを立てる
+
+ *   ③ emit_runtime()で__fmul/__fdivをオンデマンド出力
+
+ *
+
+ * 出力順序（v1.02の出力順を継承）:
+
+ *   CODE → RUNTIME（__fmul/__fdiv等） → DATA
+
+ *   .org RUNTIME_ORG の後に emit_runtime() を呼ぶことで
+
+ *   物理配置は設計書通り。前方参照はhasm23が解決。
+
+ * ============================================================ */
+
+/* ① グローバルフラグ（v1.02のg_use_mul等と同じパターン）*/
+
+static int g_use_fmul = 0;  /* __fmul が使われた場合1 */
+
+static int g_use_fdiv = 0;  /* __fdiv が使われた場合1 */
+
+/* ② フラグを立てる（emit_exprのSIR_FMUL/SIR_FDIVケース内）*/
+
+case SIR_FMUL:
+
+    g_use_fmul = 1;
+
+    /* ... spill / eval / JSR __fmul ... */
+
+    emit("    JSR  __fmul");
+
+    break;
+
+case SIR_FDIV:
+
+    g_use_fdiv = 1;
+
+    /* ... spill / eval / JSR __fdiv ... */
+
+    emit("    JSR  __fdiv");
+
+    break;
+
+/* ③ emit_runtime()に__fmul/__fdivを追加（既存のcc_mul等と並列）*/
+
+static void emit_runtime(void) {
+
+    /* 既存: cc_mul / cc_div / cc_mod（v1.02から継承）*/
+
+    if (g_use_mul) emit_cc_mul();
+
+    if (g_use_div || g_use_mod) emit_cc_div_base();
+
+    if (g_use_mod) emit_cc_mod();
+
+    /* v1.10追加: __fmul / __fdiv */
+
+    if (g_use_fmul) emit_fmul_runtime();
+
+    if (g_use_fdiv) emit_fdiv_runtime();
+
+}
+
+/* 効果: floatを使わないプログラム（Dhrystone等）では
+
+ *       g_use_fmul=0 / g_use_fdiv=0 のまま → ランタイム未出力。
+
+ *       Dhrystone回帰テストでbin完全一致が確認できる。*/
+
+## **6.4 __fmulランタイム実装（8ループ・borrow方式）**
+
+**【v2.1是正】以下の擬似アセンブリは採用しない（§2.5.1/§2.5.3）。ISA2.3非実在命令(STW直接アドレス・SHR #8・ANDI後のBGEによる符号なしキャリー検出)を含む。実装はcc_mul実体流儀＋32bit中間シフト加算で書き直し、ワークはcc_mul領域共用(§2.5.2)・C_MUL_PRE新規確保は廃止。本擬似コードは設計意図(8ループシフト加算でQ8.8積>>8)の参考としてのみ残置。**
+
+; ============================================================
+
+; __fmul  (emit_fmul_runtime() でオンデマンドインライン出力)
+
+; 入力 : A = a (Q8.8), B = b (Q8.8)
+
+; 出力 : A = result (Q8.8)   result = (a * b) >> 8
+
+; 破壊 : B（呼び出し側でcall前spillを行うこと・§6.1参照）
+
+; 方式 : 8ループ シフト加算法（符号なし比較borrow方式でISA非依存）
+
+; ============================================================
+
+__fmul:
+
+    STW  A, C_MUL_BASE
+
+    STW  B, C_MUL_B
+
+    LDW  A, #0
+
+    STW  A, C_MUL_R
+
+    LDW  A, #0
+
+    LDW  B, [C_MUL_B]
+
+    SHR  B, #8            ; multiplierの上位8bitのみ（8ループ）
+
+    LDW  X, #8
+
+.fmul_loop:
+
+    ANDI B, #1
+
+    BEQ  .fmul_skip
+
+    STW  [C_MUL_R], C_MUL_PRE   ; 加算前値退避（borrow方式）
+
+    ADD  [C_MUL_R], [C_MUL_BASE]
+
+    CMP  [C_MUL_R], [C_MUL_PRE] ; 符号なしoverflow検出
+
+    BGE  .fmul_no_carry
+
+    ADD  A, #1
+
+.fmul_no_carry:
+
+.fmul_skip:
+
+    SHL  [C_MUL_BASE], #1
+
+    SHR  B, #1
+
+    SUBI X, #1
+
+    BNE  .fmul_loop
+
+    LDW  B, [C_MUL_R]
+
+    SHR  B, #8
+
+    SHL  A, #8
+
+    OR   A, B
+
+    RET
+
+**⚠ **C_MUL_PRE（2byte）のワーク領域が必要。emu23_device_design_v1_2.docxのワーク領域割付を更新すること。
+
+## **6.5 __fdivランタイム実装（17ループ・純粋非回復型）**
+
+**【v2.1是正】SHL A,#8（即値シフト）・MOV/ORI 等の表記はISA2.3実在命令へ読み替えること（§2.5.1）。SHLはレジスタ経由形 `LDW B,#8; SHL A,B`。ワークはcc_div領域共用(§2.5.2)。アルゴリズム(17ループ非回復型・非負前提)自体は維持。**
+
+; ============================================================
+
+; __fdiv  (emit_fdiv_runtime() でオンデマンドインライン出力)
+
+; 入力 : A = numerator (Q8.8), B = denominator (Q8.8)
+
+; 出力 : A = result (Q8.8)
+
+; 破壊 : B（呼び出し側でcall前spillを行うこと・§6.1参照）
+
+; 方式 : 純粋非回復型除算（17ループ・丸め精度向上）
+
+; 制限 : 非負前提。負数入力時の動作は未定義
+
+; ============================================================
+
+__fdiv:
+
+    STW  B, C_DIV_B
+
+    SHL  A, #8            ; numerator <<= 8（非負前提）
+
+    LDW  B, #0
+
+    LDW  X, #17           ; 17ループ（丸め精度向上）
+
+.fdiv_loop:
+
+    SHL  B, #1
+
+    SHL  A, #1
+
+    CMP  A, [C_DIV_B]
+
+    BLT  .fdiv_no_sub
+
+    SUB  A, [C_DIV_B]
+
+    ORI  B, #1
+
+.fdiv_no_sub:
+
+    SUBI X, #1
+
+    BNE  .fdiv_loop
+
+    MOV  A, B
+
+    RET
+
+# **7. 定数畳み込み・不要ノード削除**
+
+## **7.1 最適化レベルと対象**
+
+| **パターン** | **最適化レベル** | **処理** |
+| --- | --- | --- |
+| int定数 op int定数 | ~~O0（常時）~~ **O0（-O0-strict以外・v2.2）** | コンパイル時整数演算 |
+| float定数 op float定数 | ~~O0（常時）~~ **O0（-O0-strict以外・v2.2）** | コンパイル時Q8.8演算。オーバーフローチェック付き（§7.2） |
+| int定数 op float定数 | ~~O0（常時）~~ **O0（-O0-strict以外・v2.2）** | int→Q8.8変換後コンパイル時演算 |
+| (float)整数定数 | ~~O0（常時）~~ **O0（-O0-strict以外・v2.2）** | ival <<= 8 → SIR_CONST(type=T_FLOAT)。型変換ノード自体は-O0-strictでも挿入されるが、定数の畳み込み(縮退)は行わない |
+| (int)float定数 | ~~O0（常時）~~ **O0（-O0-strict以外・v2.2）** | ival >>= 8 → SIR_CONST(type=T_INT)。同上 |
+| SIR_NOP子ノード | O0（-O0-strict以外） | 不要ノード除去 |
+| SIR_CASTで型が同一 | O0（-O0-strict以外） | CASTノード除去 |
+| F2I(I2F(x)) → x | O0（条件付き・-O0-strict以外） | is_safe_range(x)が真の場合のみ。§7.4 |
+| x * 0 / x * 0.0 | O1 | → SIR_CONST(0, type=対象型) |
+| x * 1.0（=x*256） | O1 | → x（乗算除去） |
+| x + 0 / x + 0.0 | O1 | → x（加算除去） |
+| x - 0 / x - 0.0 | O1 | → x（減算除去） |
+| x / 1.0（=x/256） | O1 | → x（除算除去） |
+| x * 2.0（T_FLOAT限定） | O1 | → SHL x, #1（float専用） |
+| x / 2.0（T_FLOAT限定） | O1 | → SAR x, #1（float専用。SARで符号保存） |
+| x - x | O1 | → SIR_CONST(0, type=対象型)（same_node判定） |
+
+## **7.2 fold_binop実装仕様**
+
+static int fold_binop(sir_op_t op, int a, int b, ctype_t type) {
+
+    int is_float = (type == T_FLOAT);
+
+    if (is_float) {
+
+        switch (op) {
+
+        case SIR_ADD:  return (int16_t)(a + b);
+
+        case SIR_SUB:  return (int16_t)(a - b);
+
+        case SIR_FMUL: {
+
+            int32_t tmp = (int32_t)a * b;
+
+            if (tmp > (int32_t)0x7FFF00 || tmp < -(int32_t)0x800000)
+
+                warning("float overflow in constant FMUL");
+
+            return (int16_t)(tmp >> 8);
+
+        }
+
+        case SIR_FDIV:
+
+            if (b == 0) { error("division by zero"); return 0; }
+
+            return (int16_t)(((int32_t)a << 8) / b);
+
+        }
+
+    } else { /* T_INT */ 
+
+        switch (op) {
+
+        case SIR_ADD:   return (int16_t)(a + b);
+
+        case SIR_SUB:   return (int16_t)(a - b);
+
+        case SIR_MUL:   return (int16_t)(a * b);
+
+        case SIR_DIV:
+
+            if (b == 0) { error("division by zero"); return 0; }
+
+            return (int16_t)(a / b);
+
+        case SIR_MOD:
+
+            if (b == 0) { error("modulo by zero"); return 0; }
+
+            return (int16_t)(a % b);
+
+        case SIR_AND:   return (int16_t)(a & b);
+
+        case SIR_OR:    return (int16_t)(a | b);
+
+        case SIR_XOR:   return (int16_t)(a ^ b);
+
+        case SIR_SHL:   return (int16_t)(a << b);
+
+        case SIR_SHR_S: return (int16_t)(a >> b);
+
+        }
+
+    }
+
+    return 0;
+
+}
+
+/* O1: 代数簡約 */
+
+static sir_node_t *fold_algebraic(sir_op_t op, sir_node_t *L, sir_node_t *R) {
+
+    if ((op==SIR_MUL||op==SIR_FMUL) && is_zero(R)) return make_const(0,R->type);
+
+    if (op==SIR_FMUL && is_const(R,256)) return L;
+
+    if (op==SIR_FDIV && is_const(R,256)) return L;
+
+    if (op==SIR_FMUL && L->type==T_FLOAT && is_const(R,512)) return make_shl(L,1);
+
+    if (op==SIR_FDIV && L->type==T_FLOAT && is_const(R,512)) return make_sar(L,1);
+
+    if ((op==SIR_ADD||op==SIR_SUB) && is_zero(R)) return L;
+
+    if (op==SIR_SUB && same_node(L,R)) return make_const(0,L->type); /* x-x→0 */
+
+    return NULL;
+
+}
+
+## **7.3 不要ノード削除pass**
+
+- **SIR_NOP除去：**emit_expr()でスキップ（-O0-strict時は無効）
+
+- **同型CAST除去：**SIR_CASTのsrc_type == dst_typeの場合、CASTノードを子ノードに置換（-O0-strict時は無効）
+
+- **定数I2F/F2I：**オペランドが定数の場合、コンパイル時変換してSIR_CONSTに置換（fold_binopに包含）
+
+## **7.4 F2I(I2F(x)) 往復変換除去（is_safe_range付き）**
+
+static sir_node_t *opt_cast_cancel(sir_node_t *n) {
+
+    if (n->op == SIR_F2I && n->left && n->left->op == SIR_I2F) {
+
+        sir_node_t *inner = n->left->left;
+
+        if (is_safe_range(inner)) return inner;
+
+        return n;
+
+    }
+
+    return n;
+
+}
+
+static int is_safe_range(sir_node_t *n) {
+
+    if (n->op == SIR_CONST && n->type == T_INT)
+
+        return (n->ival >= -128 && n->ival <= 127);
+
+    if (n->type == T_CHAR) return 1;
+
+    return 0;
+
+}
+
+**⚠ **is_safe_range()がfalseの場合は最適化しない。-O0-strict時はこの最適化も無効。
+
+## **7.5 将来布石：ゼロ比較正規化（peephole対象）**
+
+if(x)のようなゼロ比較をIR段階でCMP x,0として正規化しておくことで、将来のpeepholeパスでBZ直接分岐へのCMP省略最適化が適用しやすくなる。v1.10では未実装。O2フェーズで対応予定。
+
+> **[v2.6注記・E-1]** peephole最適化のopt_level配置は §9.2 で **O1への繰り上げを検討中**（v2.01で確定予定）。本節の「O2フェーズで対応予定」は当該繰り上げに伴い改版される見込み。最新方針は §9.2 を参照。
+
+# **8. 実装ステップ**
+
+| **Step** | **作業** | **対象ファイル** | **検証方法** |
+| --- | --- | --- | --- |
+| 1 | 型enum拡張（T_FLOAT/T_BOOL/T_UINT追加） | scc23_v2_00.c（v1.02ベース） | コンパイル通過 |
+| 2 | IRオペコード追加・旧名称リネーム | scc23_v2_00.c | grep旧名称ゼロ確認。-Wallで未処理case検出 |
+| 3 | floatリテラル字句解析（1.5→ival=384, type=T_FLOAT） | scc23_v2_00.c | float定数出力確認テスト |
+| 4 | parse_expr() float対応・型変換ノード挿入 | scc23_v2_00.c | float四則演算コンパイル確認 |
+| 5 | 定数畳み込みpass実装（fold_binop）O0分＋overflow警告 | scc23_v2_00.c | 定数式が縮退すること確認（runtimeなしでテスト可能） |
+| 6 | emit_expr() SIR_FMUL/FDIV/I2F/F2I対応・has_call spill追加 | scc23_v2_00.c | 生成アセンブリ目視確認（JSR __fmul前にspill命令が出ること） |
+| 7 | __fmul/__fdivランタイムをオンデマンドインライン出力（g_use_fmul/fdivフラグ） | scc23_v2_00.c | 単体テスト（1.5*2.0=3.0、3.0/1.5=2.0確認）。floatなし時はランタイム未出力を確認 |
+| 8 | 不要ノード削除pass（NOP・同型CAST・F2I(I2F)安全範囲内除去） | scc23_v2_00.c | NOP混入テストで確認。-O0-strict切替動作確認 |
+| 9 | opt_level管理（-O0/-O0-strict/-O1）・代数簡約O1分 | scc23_v2_00.c | -O0/-O1切替動作確認（x*0が0に縮退すること） |
+| 10 | 結合テスト・Dhrystone回帰・設計書改版 | toolchain23_design_v1_3.docx | float演算プログラムemu23実行確認。Dhrystone cycles同一確認 |
+
+~~**v2.0の実装上の注意：**Step1はv1.02（scc23_v1_02.c）をコピーしてscc23_v1_10.cを作成することから開始する。v1.02で実装済みの--code-org等のオプション・オンデマンド機構はそのまま引き継ぐこと。~~
+
+**【v2.1是正】実装上の注意：**Step1は **scc23_v1_04.c** をコピーして **scc23_v2_00.c** を作成することから開始する（出力ファイル名はv1_10ではなくv2_00・SCC_VERSION "2.00"・KY41 4点整合）。v1.04で実装済みの--code-org等オプション・オンデマンド機構・memmap v2.4対応($D400-$DBFF)はそのまま引き継ぐこと。**Step2のオペコードリネーム（SIR_CMP_*_S化）は§2.5.4により見送る**——本Stepでは新規オペコード(SIR_FMUL/SIR_FDIV/SIR_I2F/SIR_F2I)の追加と、float関連のswitch-case追加のみ行い、既存SIR_LT等の名称は変更しない。grep確認は新規追加オペコードのcase網羅(-Wall -Wswitch)に対して行う。
+
+# **9. スコープ外事項**
+
+| **項目** | **理由・方針** |
+| --- | --- |
+| printf %f書式対応 | 実装難度が高い。別途対応を検討 |
+| IEEE 754完全準拠 | FPUなし環境では不要。Q8.8で実用十分 |
+| bool型実装 | 後回しOK。IRに予約済み |
+| unsigned型実装 | 後回しOK。IRに予約済み |
+| Q16.16（32bit float） | 将来Phase 2以降で検討。ADD32マクロは再利用可能 |
+| レジスタ割付（RA） | call前spillで最低限対応。本格RAは将来O2フェーズ |
+| float_runtime23.asm別ファイル | v2.0でオンデマンドインライン出力に変更。廃止 |
+| 本プロジェクトロードマップへの組み込み | 本設計書時点では未スケジュール |
+
+## **9.1 既知の技術的負債・次回改良候補（v2.4追記・2026-06-25）**
+
+scc23 v2.00完了時点で意図的に見送った項目および次回改良すべき項目を記録する。
+
+**意図的に見送った最適化（本セッション判断）：**
+
+| 項目 | 見送り理由 |
+| --- | --- |
+| F2I(I2F(x))往復変換除去（§7.4） | 変数は範囲を静的保証できず除去不可。範囲外整数のI2Fオーバーフロー挙動温存が必要。定数は既存畳み込みで処理済。効果対リスクが見合わず恒久見送り寄り |
+| x*2.0→SHL / x/2.0→SAR（§7.1） | 式中シフト挿入の新emit経路の検証コストが×2/÷2限定効果に見合わず。O1強化orO2で再検討 |
+
+**設計当初からの将来/予約項目：**
+
+| 項目 | 状態 |
+| --- | --- |
+| bool型（T_BOOL） | IRノード型・enum予約のみ。次期実装 |
+| unsigned型（T_UINT）+符号なし比較・SHR_U | 予約のみ。次期実装 |
+| 比較命令リネーム（SIR_LT→SIR_CMP_LT_S等） | 見送り（動作実装済・名称のみ）。bool実装時に同時実施 |
+| 符号/ゼロ拡張（SIR_SEXT8_16/ZEXT8_16） | 予約のみ |
+| ゼロ比較正規化peephole（§7.5） | O2フェーズ（→ §9.2 で O1繰り上げを検討中・v2.01で確定予定） |
+| 本格レジスタ割付（RA） | call前spillで保守対応中。O2フェーズ |
+| Q16.16（32bit float） | Phase 2 |
+
+**今回バグ修正で露呈した検証負債（次回最優先で対処推奨）：**
+
+| # | 項目 | 内容 |
+| --- | --- | --- |
+| C-1 | call戻り値型の網羅テスト不足 | float関数()+定数バグがStep1〜9をすり抜けた。戻り値型(float/int)×演算(+/-/*/÷)×右辺種別(定数/変数/call)のマトリクステストを回帰スイートに追加すべき |
+| C-2 | Q8.8期待値の手計算ミス防止 | 期待値手計算で誤記が発生（8.5を0x0850と誤記、正0x0880）。C式→Q8.8 hex変換ヘルパスクリプトを用意し手計算を排除すべき |
+| C-3 | **float関数の前方宣言なし呼び出し（潜在バグ）** | 現状、未定義関数callはT_INTフォールバック。前方未定義のfloat返し関数を先に呼ぶと(C)の誤昇格が再発しうる。プロトタイプ宣言の型記録 or 2パス化が望ましい。**実害が出る前に対処すべき既知の制約** |
+
+## **9.2 peephole最適化 O1繰り上げ（v2.5計画追記→v2.7実装完了）**
+
+> **✅ 【v2.7・2026-06-26】本節の計画は scc23 v2.01 として実装・全検証完了。** P2a（完全同一連続MOV削除）・P2b（dead store除去）を -O1 へ新設。命令ストリームバッファ基盤（方式B）を導入。検証結果は §9.2.10 を参照。実装済コンパイラは scc23_v2_01.c（SCC_VERSION "2.01"）。
+>
+> ~~**⚠ 本節は計画段階。実装は未着手・レビュー保留中。** 確定済みの§1〜§8とは異なり、本節の内容はレビュー承認前であり、scc23の実コードには一切反映されていない。承認・実装・全検証完了をもって、別途 scc23 v2.01 として確定し本節を「実装済」へ改版する予定。有識者レビュー用に計画内容を記録する。~~（v2.7で実装完了につき取り消し。計画文は経緯保存のため残置・KY41）
+
+### 9.2.1 目的とスコープ
+
+scc23のopt_level定義を見直し、asmレベルのpeephole最適化を**-O1に繰り上げる**。一般的なコンパイラ慣行（GCC等でpeepholeは-O1で有効）に整合させる。最終的に **scc23 v2.01** として確定（コンパイラ版数のリネームはP2完成・全検証後に一括実施。それまでは実装・検証をv2.00ベースで行う）。
+
+**背景**：現行v2.00の最適化はIRレベルの3pass（定数畳み込み・代数簡約・不要ノード削除）のみで、出力済みasm命令列を走査する真のpeepholeは未実装（emitは固定テンプレート逐次出力方式）。そのため -O0/-O1 のDhrystoneがbyte-exact一致し「-O1に上げる意味（高速化）」が現状乏しい。peepholeをO1に入れることで-O1で初めてcycles削減効果が生じる。
+
+### 9.2.2 opt_level 再定義（承認済方針・§7.1改版対象）
+
+| level | 現行(v2.00) | 変更案(v2.01) |
+| --- | --- | --- |
+| -O0 | 定数畳み込み | （変更なし） |
+| -O0-strict | 全最適化OFF・回帰運用 | （変更なし） |
+| **-O1** | O0＋代数簡約 | O0＋代数簡約＋**asm peephole** |
+| O2 | peephole等の予約先 | peephole繰上げにより、本格RA等の予約先へ |
+
+§7.5（ゼロ比較正規化peepholeのO2送り記述）も併せて改版予定。§9.1のpeephole関連項（O2フェーズ送り）は本節へ統合。
+
+### 9.2.3 絶対ゲートの扱い（承認済）
+
+- byte-exact検証は **-O0-strictで従来通り維持**（826/48405/P:20 不変）。peepholeはO1のみ作動するため-O0-strictには無影響。
+- **-O1は新トラック**：peephole適用後のcycles改善値を新基準として別途記録する。既存ゲート（-O0-strict基準）とは不連続にしない。
+
+### 9.2.4 実装方式
+
+emitを「文字列逐次出力」から「命令列バッファへ蓄積 → 全emit後に走査・パターン書換 → flush」構造へ変更。peephole基盤の新設を伴う。
+
+### 9.2.5 peepholeパターン（段階導入・P2から着手：承認済）
+
+| # | パターン | 置換 | 段階 | リスク |
+| --- | --- | --- | --- | --- |
+| **P2** | `MOV A,B` / `MOV B,A`（連続・冗長） | 後者削除 | **初版（最安全・SP非関与）** | 低 |
+| P3 | `ADD B,A` / `MOV A,B` | 統合 | 次段階 | 低〜中 |
+| P1 | `SUBI SP,#2`/`STW A,[SP]` … `LDW B,[SP]`/`ADDI SP,#2`（間にSP操作なし） | `MOV B,A` | 基盤安定後 | **高** |
+| P4 | 連続する同一 `LDW A,#imm` 重複 | 後者削除 | 任意 | 低 |
+
+### 9.2.6 リスクと防止策（KY）
+
+- **P1のスタック往復除去は最高リスク**：前後のSP操作判定を誤るとスタック破壊（_fmul X破壊バグと同種の危険）。基盤が固まるまで着手しない。判定は保守的に（介在命令の有無が少しでも不明なら置換しない）。
+- バッファ走査の前後関係判定は「間に介在する命令が無いこと」を厳密確認。
+- 各パターン追加ごとに **Dhrystone -O0-strict byte-exact維持** と **-O1動作正常** を1変更1検証。
+- 命令列書換は実験ファイル（KY38）で先行検証してから本番反映。
+
+### 9.2.7 検証計画
+
+1. P2実装 → -O1で冗長MOVが消えることをasm確認
+2. -O0-strict byte-exact維持確認（O1のみ作動のため不変のはず）
+3. float演算・代数簡約の全回帰スイート再走
+4. -O1 Dhrystoneの新cycles値を記録（新基準確定）
+5. 全パス後に scc23 v2.01 へ一括リネーム（KY41 4点整合）
+
+### 9.2.8 v2.01確定時の設計書改版予定
+
+§7.1（opt_level表：peephole=O1）／§7.5（O2送り記述の修正）／§9.1（peephole項をO2予約から実装済へ）／新節（peephole基盤・パターン仕様）／改版履歴・版数行・フッタをv2.01系へ（KY41 append-only）。
+
+### 9.2.9 レビュー指摘書 v1.1 反映・実測によるパターン表確定（v2.6追記・2026-06-25）
+
+> **本サブ節は §9.2.5 のパターン表を実測ベースで改訂する（本節が §9.2.5 旧表に優先。KY41 append-only：旧表は参照用に保持）。** レビュー指摘書 `scc23_v2_00_design_v2_5_review_v1_1.md`（M×4・E×3）を受け、KY34（実ソースが真実）に従い現行 scc23 v2.00 の実 emit を実測してから設計を確定する。
+
+**(0) 実 emit 実測結果（KY34・M-3対応）**
+
+現行 scc23 v2.00 が Dhrystone（dhry_timer.c）で吐く asm を実測:
+
+| 項目 | 実測値 | 含意 |
+| --- | --- | --- |
+| スタック退避の形 | **`SUBI SP,#2` / `STW A,[SP]` 形が実体**（`PUSH/POP` 形ではない） | P1イディオムは実体と合致。指摘書M-3が懸念した「§6.1のPUSH/POP形との食い違い」は実測で否定された。式評価spillはSUBI SP/STW形が正 |
+| `MOV A,B` 総数 | 132回 | — |
+| うち直後が `LDW A,#imm`（dead store） | **59回（約45%）** | M-1(b) dead store除去が高頻度。P2初版の主対象とする |
+| `LDW B,[SP]` / `ADDI SP,#2`（P1往復後半） | **197回** | P1対象も実在・高頻度。ただし高リスクのため後段 |
+
+**(1) M-1対応：P2 の対象を「dead store除去」へ実体ベースで再定義**
+
+旧§9.2.5のP2「`MOV A,B`/`MOV B,A` 後者削除」は置換条件が不十分（逆順 `MOV B,A; MOV A,B` では意味が異なり、削除で生き残る側が後続でliveなら結果が変わる）。**P2の初版対象を以下の自明・安全集合に限定する**:
+
+- **P2a（完全同一連続）**: `MOV X,Y` / `MOV X,Y`（同一dst・同一src の連続）→ 後者削除。確実に冗長。
+- **P2b（dead store除去）**: `MOV A,#…`/`MOV A,B`/`LDW A,…` 等で A に書いた直後、**A を読まずに A を上書きする命令**が来る場合 → 前者削除。実測で `MOV A,B` 直後 `LDW A,#imm` が45%を占める主パターン。
+
+各パターンに**置換成立の前提（どのレジスタがdeadか）を必須ガードとして付す**。判定が少しでも不明なら非置換。
+
+**(2) M-2対応：3トラックの不変/可変を明記**
+
+| トラック | 最適化 | 不変/可変 |
+| --- | --- | --- |
+| `-O0-strict` | 全OFF | **byte-exact 826/48405/P:20 を不変維持**（peephole無影響） |
+| `-O0`（非strict） | 定数畳み込みのみ | **peephole非適用＝asm従来と byte不変**（←明記。検証計画にも追加） |
+| `-O1` | 代数簡約＋peephole | **新トラック。cycles新基準を別記録** |
+
+§9.2.7検証計画に「**-O0（非strict）の asm も従来と byte不変であること**」を1項追加する。
+
+**(3) M-4対応：P1 のSP判定条件を具体化**
+
+P1（スタック往復→`MOV B,A`）の置換可否判定では、往復区間内に次のいずれかが介在する場合は**置換しない**:
+(i) SP を読む/書く命令、(ii) **SP相対アクセス `[SP+imm]` を含む LDW/STW**、(iii) サブルーチン呼び出し（JSR/RET）。判定が少しでも不明なら保守的に非置換。本ISAはSP相対でフレーム変数にアクセスするため、(ii)の見落としは _fmul の X(フレームポインタ)破壊バグ（§2.5.8）と同種の事故になり得る。
+
+**(4) E-1対応：§7.5・§9.1 の O2記述に相互参照を追加（append-only）**
+
+§7.5（ゼロ比較正規化＝O2送り）・§9.1（peephole項＝O2フェーズ）の該当行に注記「→ §9.2 で O1繰り上げを検討中（v2.01で確定予定）」を追記する（削除・取消線でなく追記）。本v2.6で反映済（後述§7.5/§9.1注記参照）。
+
+**(5) E-2対応：版数台帳更新を改版予定に追加**
+
+§9.2.8の改版予定に追加:「tool_version_ledger を scc23 v2.01・-O1新基準値で更新（KY41 4点整合）」。
+
+**(6) E-3対応：導入順の明示**
+
+§9.2.5パターン表の導入順を明示:**①P2（P2a/P2b）②P3 ③P1 ④P4（任意）**。番号順ではなく安全度順に着手することを明記。
+
+**(7) 指摘書未反映の判断記録**
+
+指摘書M-3が懸念した「P1がPUSH/POP形と食い違い実装してもマッチしない」点は、実測の結果**実体がSUBI SP/STW形であり P1イディオムは合致**していたため、表記変更は不要と判断（ただし「実測で確認せよ」という主旨は完全に正しく、本(0)で履行）。
+
+**確定後の着手条件**: 上記(1)〜(3)を §9.2 に反映した本v2.6をもって、M-1〜M-4は設計段階で解消。レビュー再承認後、P2（P2a/P2b）から実装着手してよい段階と判断する。
+
+### 9.2.10 実装結果（v2.7追記・2026-06-26・scc23 v2.01確定）
+
+本節 §9.2 の計画に基づき scc23 v2.01 を実装・全検証した。実装担当チャット（HANDOVER_PEEPHOLE_v1_0.md 系列）にて、実装着手再承認・工程確認・KY活動を経て着手。
+
+**(A) 実装方式（§9.2.4 を方式Bで具体化）**
+
+emit 全面バッファ化（方式A）ではなく、**関数生成区間のみ命令ストリームをバッファ化する方式B**を採用（レビュー時の選択。-O0-strict byte不変を構造的に保証しやすく、改修面積が小さい）。具体的には emit/emit_label の出力を関数生成区間（プロローグ出力直前で g_insbuf_on=1、RET 出力後に解除）のみ g_insbuf[] へ蓄積し、関数クローズ時に -O1 なら peephole_pass() を走らせてから insbuf_flush() で out_fp へ実書き込み。data_section 等の関数外出力はバッファ OFF で従来通り即時出力（byte不変）。
+
+**(B) 実装パターン（初版スコープ = §9.2.9(1)）**
+
+- **P2a**: 完全同一連続MOV削除。MOV はフラグ不変（ISA2.3 0x20: flags=—）のため2個目削除は無条件安全。Dhrystone 実測では出現0件（安全基礎パターン）。
+- **P2b**: dead store除去。方針Y（超保守ホワイトリスト）。行1=Aを書く命令（MOV A,reg / LDW A,..）の直後に、行2=Aを読まずAを上書きする命令（LDW A,#imm / LDW A,[..] / MOV A,reg≠A）が**完全隣接**する場合のみ行1を削除。ガード3種: (i) 完全隣接のみ（ラベル/他命令が挟まれば writes_A_indep/overwrites_A_no_read のどちらかが偽となり非置換＝OBS-1 基本ブロック境界）、(ii) 行2 source に A 出現（[A]/MOV A,A）で非置換、(iii) **フラグ意味論ガード**: 行1=LDW（Z/N設定）かつ行2=MOV（フラグ不変）の組は行1のZ/Nが行2を素通りして後続へ残るため非置換。
+
+なお P3・P1・P4 は本 v2.01 では未実装（§9.2.9(6) 安全度順により P2 を初版とし、P1 は最高リスクのため基盤安定後＝将来）。
+
+**(C) 検証結果（§9.2.7 検証計画 全項目）**
+
+| # | 項目 | 結果 |
+| --- | --- | --- |
+| 1 | -O1で冗長MOV/dead store消去をasm確認 | ✅ Dhrystone 63命令削除（MOV A,B 132→69）。削除は全てdead store、誤削除0 |
+| 2 | -O0-strict byte-exact維持 | ✅ Dhrystone **826/48405/P:20 完全一致** |
+| 3 | -O0（非strict）asm byte不変 | ✅ 5ソース×{-O0,-O0-strict} 命令列 v2.00と完全一致（versionコメントのみ差） |
+| 4 | float演算・代数簡約 全回帰 | ✅ _fmul(21)/_fdiv(22)/I2F=SHL A,B(7)/F2I=SAR A,B(7) 命令列不変。emu23実行で float乗除算・代数簡約(x*0/x*1/x-x)・混合演算 全結果一致(A6B3C39D11E0F5G0) |
+| 5 | -O1 Dhrystone新cycles記録 | ✅ **cycles 48405→48055(-350)・Dhrystones/sec 826→832・P:20不変**。本v2.01で初めて-O1にcycles削減効果が生じた |
+| 6 | v2.01一括リネーム（KY41 4点整合） | ✅ ファイル名 scc23_v2_01.c / SCC_VERSION "2.01" / ヘッダ改版 / 改版履歴 整合。--version表示「scc23 v2.01 (2026-06-26)」 |
+
+**(D) 既知メモ**
+
+Dhrystone 最終 bin の MD5 は本実装の検証で用いたリンク手順（`lnk23 --machine force` で harness@$0000/dhry@$0400 を obj 直接並置）が HANDOVER §6.3 記載手順（lds 方式）と異なるため、HANDOVER 記載値 c9ed1e78… と一致しない。ただし**バイナリサイズ 21846・Dhrystone実行値 826/48405/P:20 は一致**しており機能等価。MD5基準の再定義はリンク手順統一後に別途行う（要精査・OBS継続）。
+
+**(E) 関連台帳・文書更新**
+
+tool_version_ledger を v1.6→**v1.7** に改版（§1 scc23 行を v1.04→v2.01 に是正・改版履歴 v1.7 追記）。本設計書を v2.6→**v2.7** に改版（本 §9.2.10 追加・§9.2冒頭ステータスを実装完了へ）。
+
+
+# **10. KY活動（危険予知）**
+
+| **危険予知（KY）** | **防止策** |
+| --- | --- |
+| IRオペコードリネーム時のswitch-case取りこぼし（実行時未定義動作） | リネーム後にgrep旧名称（SIR_LT等）で残存ゼロを確認。gcc -Wallの-Wswitch警告で未処理caseを検出してから次ステップへ進む |
+| v1.02の--code-org/--data-org/--runtime-orgオプションを省略したまま開発を進め、ProcMgr統合時に配置ミスでクラッシュする危険 | Step10の結合テストでは必ずCプロセス配置（$C040/$C380/$C680）を指定してemu23で実行確認すること。省略時のデフォルト値（$0400/$4000/$0100）との差異を意識する |
+
+以上 / scc23 v2.00 設計書 v2.7（peephole実装完了反映版）

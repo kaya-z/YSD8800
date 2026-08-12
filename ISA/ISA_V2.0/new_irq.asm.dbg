@@ -1,0 +1,6 @@
+0100 1 <reset>
+0100 6 EI
+0101 8 JMP loop
+0200 2 <irq0>
+0200 12 ADDI B,#1
+0204 13 IRET

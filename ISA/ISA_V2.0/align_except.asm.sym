@@ -1,0 +1,4 @@
+0100 start
+010c loop
+010f irq0
+0110 align_fault

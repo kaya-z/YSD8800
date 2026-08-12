@@ -1,0 +1,21 @@
+0000 1 <reset>
+0000 2 <irq0>
+0000 3 <align>
+0010 7 LDW SP, #0xfffe
+0014 8 EI
+0015 9 LDW X, #0x2000
+0019 10 LDW A, #0xABCD
+001d 11 STW A, [X + #0x10]
+0021 12 LDW B, [X + #0x10]
+0025 13 CMP A, B
+0027 14 BEQ success
+002a 15 LDW A, #0xFFFF   ; 失敗
+002e 16 HALT
+002f 18 LDW A, #0x0000   ; 成功の目印
+0033 20 LDW A, #0x2001   ; 奇数アドレス (0x2001) をAにセット
+0037 21 LDW B, [A]       ; 奇数アドレスへのLDWでalign例外発生
+0039 22 HALT             ; ここには到達しないはず
+003a 25 LDW A, #0x1234   ; IRQ0が入った証拠
+003e 26 IRET
+003f 29 LDW A, #0xDEAD   ; アライメント例外が入った証拠（A=DEAD）
+0043 30 IRET             ; テストのためIRET（本番では適切に処理）

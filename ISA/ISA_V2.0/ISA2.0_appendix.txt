@@ -1,0 +1,100 @@
+Stage1：Control / Core（最小実行系）
+目的
+
+リセット
+
+ジャンプ
+
+割り込み
+
+HALT
+
+👉 emu と hasm の同期検証が可能になる最小集合
+
+命令一覧
+命令	オペランド	hasm視点の処理
+NOP	なし	1byte
+HALT	なし	1byte
+EI	なし	1byte
+DI	なし	1byte
+IRET	なし	1byte
+JMP label	rel16	label → PC相対
+CALL label	rel16	PC+len 基準
+RET	なし	1byte
+hasm が最低限やること
+
+ラベル解決
+
+PC 相対オフセット計算
+
+.org
+
+.vector
+
+.dbg
+
+Stage1-b：Exception / IRQ（Control拡張）
+目的
+
+タイマ割り込み
+
+アラインメント例外
+
+外部IRQ
+
+👉 ISA2.0 の「芯」
+
+命令	備考
+EI	すでに Core
+DI	同上
+IRET	flags + PC 復帰
+アセンブラ追加要素
+ディレクティブ	意味
+.vector irqN label	ベクタ定義
+.org	ベクタ配置
+Stage1-c：Memory Access（最小）
+目的
+
+データアクセス
+
+アラインメント例外を踏ませる
+
+命令一覧（最小）
+命令	意味
+LDW R, label	絶対アドレス
+STW R, label	同上
+LDW R, [abs]	明示間接（後でも可）
+
+※ この段階では [X] は不要
+
+👉 Alignment Exception サンプルは
+LDW R, label + odd address で作れる。
+
+Stage2：Compute（ALU）
+目的
+
+実用的なプログラム
+
+条件分岐
+
+命令群
+種類	命令
+算術	ADD SUB
+即値	ADDI SUBI
+比較	CMP
+分岐	BEQ BNE BGT BLT
+
+👉 PCC backend を意識し始めるのはここから。
+
+Stage3：Addressing Extension（最後）
+目的
+
+[X] の正式導入
+
+C コンパイラを成立させる
+
+拡張
+記法	意味
+[X]	レジスタ間接
+[X+imm]	インデックス
+[label]	メモリ間接

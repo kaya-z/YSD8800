@@ -1,0 +1,5 @@
+0010 start
+002f success
+003d irq0_handler
+0042 align_handler
+0047 syscall_handler

@@ -1,0 +1,11 @@
+fc84 UART_STAT
+e020 L1_WK_A
+e022 L1_WK_B
+e028 L1_WK_TMP
+0020 FORTH_TYPE
+003b _type_loop
+0054 _type_emit_wait
+0088 _type_done
+0090 _start
+00e0 msg
+00f0 msg2

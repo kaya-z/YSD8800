@@ -1,0 +1,4 @@
+0000 8 LDW A, #5        ; loop counter
+0004 10 ADDI A, #-1
+0008 11 BNE loop
+000b 12 HALT

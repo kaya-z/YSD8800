@@ -1,0 +1,10 @@
+000a _syscall_disp_ptr
+000c _isr_wk_a
+000e _isr_wk_b
+0010 _isr_wk_x
+0018 _startup
+0025 _timer_handler
+0048 _irq1_handler
+0069 _align_handler
+006a _syscall_handler
+006d _harness_dispatch

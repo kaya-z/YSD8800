@@ -1,0 +1,253 @@
+0000 44 .org $0020
+0020 47 NOP                         ; [0x00]
+0021 50 EI                          ; [0x02]
+0022 53 DI                          ; [0x03]
+0023 60 SYSCALL #0                  ; [0x05 0x00 0x00]
+0026 61 SYSCALL #$0001              ; [0x05 0x01 0x00]
+0029 62 SYSCALL #255                ; [0x05 0xFF 0x00]
+002c 63 SYSCALL #$FFFF              ; [0x05 0xFF 0xFF]
+002f 66 JSR sec2_data_transfer
+0032 73 MOV  A, B                   ; [0x20 0x01]  rD=0 rS=1
+0034 74 MOV  A, X                   ; [0x20 0x02]
+0036 75 MOV  A, SP                  ; [0x20 0x03]
+0038 76 MOV  B, A                   ; [0x20 0x10]  rD=1 rS=0
+003a 77 MOV  B, X                   ; [0x20 0x12]
+003c 78 MOV  X, A                   ; [0x20 0x20]
+003e 79 MOV  X, B                   ; [0x20 0x21]
+0040 80 MOV  SP, A                  ; [0x20 0x30]
+0042 81 MOV  SP, B                  ; [0x20 0x31]
+0044 84 LDW  A, #0                  ; [0x21 0x00 0x00 0x00]  ゼロ
+0048 85 LDW  A, #$FFFF              ; [0x21 0x00 0xFF 0xFF]  最大値
+004c 86 LDW  A, #$1234              ; [0x21 0x00 0x34 0x12]  リトルエンディアン確認
+0050 87 LDW  B, #$ABCD              ; [0x21 0x10 0xCD 0xAB]
+0054 88 LDW  X, #$0100              ; [0x21 0x20 0x00 0x01]
+0058 89 LDW  SP, #$F800             ; [0x21 0x30 0x00 0xF8]  スタック初期化相当
+005c 90 LDW  A, #42                 ; CONST1=42 の値を直接指定
+0060 91 LDW  B, #$FC80              ; IOBUF=$FC80 の値を直接指定
+0064 94 LDW  A, [$0000]             ; ベクタ先頭
+0068 95 LDW  A, [$FC80]             ; I/O領域
+006c 96 LDW  B, [RAMBASE]           ; EQU定数アドレス
+0070 97 LDW  B, [$FFFF]             ; 最大アドレス
+0074 100 STW  A, [$0200]
+0078 101 STW  B, [$0202]
+007c 102 STW  X, [$0204]
+0080 103 STW  SP, [$0206]
+0084 106 LDW  A, [A]                 ; rD=rS=0 (セルフ参照)
+0086 107 LDW  A, [B]
+0088 108 LDW  A, [X]
+008a 109 LDW  A, [SP]
+008c 110 LDW  B, [A]
+008e 111 LDW  B, [B]
+0090 112 LDW  B, [X]
+0092 113 LDW  X, [A]
+0094 114 LDW  X, [B]
+0096 117 STW  A, [A]
+0098 118 STW  A, [B]
+009a 119 STW  A, [X]
+009c 120 STW  B, [A]
+009e 121 STW  B, [B]
+00a0 122 STW  B, [X]
+00a2 123 STW  X, [A]
+00a4 124 STW  X, [B]
+00a6 127 LDW  A, [X + #0]            ; オフセット0
+00aa 128 LDW  A, [X + #2]
+00ae 129 LDW  A, [X + #$0100]
+00b2 130 LDW  A, [X + #$FFFE]        ; 最大オフセット (負方向)
+00b6 131 LDW  B, [X + #4]
+00ba 132 LDW  X, [X + #8]            ; Xで自分をロード
+00be 135 STW  A, [X + #0]
+00c2 136 STW  A, [X + #2]
+00c6 137 STW  B, [X + #4]
+00ca 138 STW  X, [X + #6]
+00ce 140 JSR sec3_alu
+00d1 147 ADD  A, A                   ; [0x40 0x00]
+00d3 148 ADD  A, B                   ; [0x40 0x01]
+00d5 149 ADD  A, X                   ; [0x40 0x02]
+00d7 150 ADD  B, A                   ; [0x40 0x10]
+00d9 151 ADD  B, B
+00db 152 ADD  X, A
+00dd 153 ADD  X, B
+00df 156 ADDI A, #0                  ; +0
+00e3 157 ADDI A, #1
+00e7 158 ADDI A, #$FFFF              ; -1 相当 (符号なし最大)
+00eb 159 ADDI A, #$8000              ; 最小負数相当
+00ef 160 ADDI B, #100
+00f3 161 ADDI X, #$0002              ; X を 2 進める
+00f7 164 SUB  A, A                   ; [0x42 0x00] -> 0
+00f9 165 SUB  A, B                   ; [0x42 0x01]
+00fb 166 SUB  B, A
+00fd 167 SUB  X, A
+00ff 170 SUBI A, #0
+0103 171 SUBI A, #1
+0107 172 SUBI A, #$FFFF
+010b 173 SUBI B, #2
+010f 174 SUBI X, #$0002
+0113 177 CMP  A, A                   ; Z=1
+0115 178 CMP  A, B
+0117 179 CMP  B, A
+0119 180 CMP  X, A
+011b 181 CMP  A, X
+011d 184 CMPI A, #0
+0121 185 CMPI A, #1
+0125 186 CMPI A, #$FFFF
+0129 187 CMPI B, #$8000
+012d 188 CMPI X, #$0001
+0131 190 JSR sec4_branch
+0134 197 JMP  jmp_target             ; 前方参照 (forward)
+0137 199 JSR  sec5_ext_stack
+013a 200 JMP  sec5_ext_stack         ; forward JMP (JSR の後で実行されない)
+013d 202 JMP  jmp_back               ; 後方参照 (backward)
+0140 206 CMPI A, #0
+0144 207 BEQ  beq_taken              ; Z=1 なら分岐 (forward)
+0147 208 NOP
+0148 210 NOP
+0149 214 CMPI A, #1
+014d 215 BNE  bne_taken
+0150 216 NOP
+0151 218 NOP
+0152 222 CMPI A, #$7FFF
+0156 223 BLT  blt_taken
+0159 224 NOP
+015a 226 NOP
+015b 230 CMPI A, #0
+015f 231 BGE  bge_taken
+0162 232 NOP
+0163 234 NOP
+0164 237 JSR  dummy_sub              ; サブルーチン呼び出し
+0167 238 NOP                         ; RET後ここへ
+0168 243 JSR  sec5_ext_stack
+016b 244 JMP  _end
+016e 251 PUSH A                      ; [0x1F 0x00]
+0170 253 PUSH B                      ; [0x1F 0x01]
+0172 255 PUSH X                      ; [0x1F 0x02]
+0174 257 POP  X                      ; [0x1F 0x05]
+0176 259 POP  B                      ; [0x1F 0x04]
+0178 261 POP  A                      ; [0x1F 0x03]
+017a 263 PUSH A
+017c 264 PUSH B
+017e 265 PUSH X
+0180 266 POP  X
+0182 267 POP  B
+0184 268 POP  A
+0186 269 RET
+0187 276 LDB  A, [$0100]             ; [0x1F 0x10 0x00 0x01]
+018b 277 LDB  A, [$FC80]             ; I/O先頭
+018f 278 LDB  A, [IOBUF]             ; EQU定数アドレス
+0193 279 LDB  A, [$FFFF]
+0197 282 LDB  A, [X]                 ; [0x1F 0x11]
+0199 285 LDB  B, [$0100]             ; [0x1F 0x12 0x00 0x01]
+019d 286 LDB  B, [$FC80]
+01a1 287 LDB  B, [IOBUF]
+01a5 288 LDB  B, [$FFFF]
+01a9 291 LDB  B, [X]                 ; [0x1F 0x13]
+01ab 294 STB  A, [$0200]             ; [0x1F 0x14 0x00 0x02]
+01af 295 STB  A, [$FC80]
+01b3 296 STB  A, [IOBUF]
+01b7 297 STB  A, [$FFFF]
+01bb 300 STB  A, [X]                 ; [0x1F 0x15]
+01bd 303 STB  B, [$0200]             ; [0x1F 0x16 0x00 0x02]
+01c1 304 STB  B, [$FC80]
+01c5 305 STB  B, [IOBUF]
+01c9 306 STB  B, [$FFFF]
+01cd 309 STB  B, [X]                 ; [0x1F 0x17]
+01cf 310 RET
+01d0 317 DW   $0000                  ; リトルエンディアン 00 00
+01d2 318 DW   $FFFF                  ; FF FF
+01d4 319 DW   $1234                  ; 34 12
+01d6 320 DW   _start                 ; ラベル参照 (アドレス値)
+01d8 321 DW   IOBUF                  ; EQU 参照
+01da 324 DB   0                      ; 単一バイト
+01db 325 DB   $FF
+01dc 326 DB   255
+01dd 327 DB   "A"                    ; 1文字
+01de 328 DB   "YSD8800",0            ; 文字列 + NUL 終端
+01e6 329 DB   1,2,3,4,5              ; 複数数値
+01eb 330 DB   "ISA",0,"2.1",0        ; 文字列 + NUL * 2
+01f3 342 LDW  A, #0
+01f7 343 LDW  A, #255
+01fb 344 LDW  A, #65535
+01ff 347 LDW  A, #$00
+0203 348 LDW  A, #$FF
+0207 349 LDW  A, #$1234
+020b 350 LDW  A, #$ABCD
+020f 351 LDW  A, #$FFFF
+0213 354 LDW  A, #0x00
+0217 355 LDW  A, #0xFF
+021b 356 LDW  A, #0x1234
+021f 357 LDW  A, #0xABCD
+0223 360 LDW  A, #E000               ; 0xE000
+0227 361 LDW  A, #FC80               ; 0xFC80
+022b 364 LDW  A, [$0000]
+022f 365 LDW  A, [$FFFF]
+0233 368 ADDI A, #0x0001
+0237 371 LDW  A, #$_start
+023b 372 LDW  A, #$irq0_isr
+023f 373 LDW  B, #$sec7_pseudo
+0243 380 ADD  A, A
+0245 381 ADD  A, B
+0247 382 ADD  A, X
+0249 383 ADD  A, SP
+024b 384 ADD  B, A
+024d 385 ADD  B, B
+024f 386 ADD  B, X
+0251 387 ADD  B, SP
+0253 388 ADD  X, A
+0255 389 ADD  X, B
+0257 390 ADD  X, X
+0259 391 ADD  X, SP
+025b 394 SUB  A, A
+025d 395 SUB  A, B
+025f 396 SUB  A, X
+0261 397 SUB  B, A
+0263 398 SUB  B, B
+0265 399 SUB  B, X
+0267 400 SUB  X, A
+0269 401 SUB  X, B
+026b 402 SUB  X, X
+026d 405 CMP  A, A
+026f 406 CMP  A, B
+0271 407 CMP  A, X
+0273 408 CMP  B, A
+0275 409 CMP  B, B
+0277 410 CMP  B, X
+0279 411 CMP  X, A
+027b 412 CMP  X, B
+027d 413 CMP  X, X
+027f 416 ADDI A, #1
+0283 417 ADDI B, #1
+0287 418 ADDI X, #1
+028b 419 ADDI SP, #2
+028f 422 SUBI A, #1
+0293 423 SUBI B, #1
+0297 424 SUBI X, #1
+029b 425 SUBI SP, #2
+029f 428 CMPI A, #0
+02a3 429 CMPI B, #0
+02a7 430 CMPI X, #0
+02ab 437 DI                          ; 割り込み禁止
+02ac 438 LDW  SP, #$F800             ; スタックポインタ初期化
+02b0 439 EI                          ; 割り込み許可
+02b1 440 NOP
+02b2 441 DI
+02b3 442 RET
+02b4 448 NOP
+02b5 449 RET                         ; [0x69]
+02b6 455 DI
+02b7 456 PUSH A                      ; コンテキスト保存
+02b9 457 PUSH B
+02bb 458 PUSH X
+02bd 460 NOP
+02be 462 POP  X
+02c0 463 POP  B
+02c2 464 POP  A
+02c4 465 IRET                        ; [0x04] FLAGS←pop / PC←pop
+02c5 468 DI
+02c6 469 PUSH A
+02c8 470 NOP
+02c9 471 POP  A
+02cb 472 IRET
+02cc 475 IRET                        ; アラインメント例外ハンドラ
+02cd 479 DI
+02ce 480 NOP
+02cf 481 IRET
+02d0 487 HALT                        ; [0x01]

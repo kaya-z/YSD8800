@@ -1,0 +1,78 @@
+自作 CPU ISA v1.0 命令仕様書（テキスト版）
+
+1. レジスタ
+レジスタ	説明
+A	汎用ワークレジスタ 16bit
+B	汎用ワークレジスタ 16bit
+X	汎用ワークレジスタ 16bit / インデックス
+SP	スタックポインタ 16bit
+PC	プログラムカウンタ 16bit
+フラグ	Z（ゼロフラグ）、N（ネガティブフラグ）
+
+2. 命令フォーマット
+
+固定長 8bit 命令 + オペランド 0〜2バイト
+
+オペランドは基本 16bit ワード（リトルエンディアン）
+
+[opcode][opnd1][opnd2]
+
+
+PC は 16bit
+
+分岐命令の disp は 8bit 相対アドレス（±127命令）
+
+3. 命令一覧
+
+3-1. データ転送
+mnemonic	opcode	オペランド	説明
+LDW A, #imm	0x10	2バイト	即値ロード
+LDW A, addr	0x11	2バイト	メモリロード
+STW A, addr	0x12	2バイト	メモリ書き込み
+PUSH A	0x13	なし	SP を減らしてレジスタ保存
+POP A	0x14	なし	SP からレジスタ復帰
+
+LDW B, #imm	0x15	2バイト	即値ロード
+LDW B, addr	0x16	2バイト	メモリロード
+STW B, addr	0x17	2バイト	メモリ書き込み
+PUSH B	0x18	なし	SP を減らしてレジスタ保存
+POP B	0x19	なし	SP からレジスタ復帰
+
+
+3-2. 算術 / 論理
+mnemonic	opcode	オペランド	説明
+ADDW reg, #imm	0x20	2バイト	即値加算
+SUBW reg, #imm	0x21	2バイト	即値減算
+AND reg, #imm	0x22	2バイト	AND
+OR reg, #imm	0x23	2バイト	OR
+XOR reg, #imm	0x24	2バイト	XOR
+NOT reg	0x25	なし	ビット反転
+SHL reg	0x26	なし	左シフト 1bit
+SHR reg	0x27	なし	右シフト 1bit
+
+3-3. 比較 / 条件分岐
+mnemonic	opcode	オペランド	説明
+CMP reg, #imm	0x30	2バイト	即値比較、Z/N更新
+BEQ disp	0x31	1バイト	Z=1 の場合分岐
+BNE disp	0x32	1バイト	Z=0 の場合分岐
+BLT disp	0x33	1バイト	N=1 の場合分岐
+BGE disp	0x34	1バイト	N=0 の場合分岐
+
+3-4. サブルーチン / 制御
+mnemonic	opcode	オペランド	説明
+JSR addr	0x40	2バイト	サブルーチン呼び出し
+RET	0x41	なし	サブルーチン復帰
+JMP addr	0x42	2バイト	無条件ジャンプ
+HALT	0xFF	なし	CPU 停止
+
+3-5. 論理演算短絡（任意拡張）
+mnemonic	opcode	オペランド	説明
+ANDL reg1, reg2	0x50	なし	reg1 = reg1 & reg2
+ORL reg1, reg2	0x51	なし	reg1 = reg1
+XORL reg1, reg2	0x52	なし	reg1 = reg1 ^ reg2
+NOTL reg	0x53	なし	ビット反転
+4. 命令エンコーディング例
+LDW #0005 → 10 00 05
+ADDW #0001 → 20 00 01
+STW 2000 → 12 20 00
+RET → 41

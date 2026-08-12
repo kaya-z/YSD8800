@@ -502,27 +502,26 @@ static void parse_toplevel(parser_t *p) {
             p->in_code = 1;
 
             /* END-CODEまでの行を ASM-LINE として読む
-             * lexer_next()でワード名を読んだ後、lexerのpushbackに
-             * 次行先頭の文字が入っている（または空）。
-             * 「行読み飛ばし」は不要 — 次行から直接読み始める。 */
+             * "CODE name ( -- )" のようにワード名と同じ行にコメントが
+             * あっても正しく動作するよう、まず現在行の残りを読み飛ばす。*/
             char linebuf[256];
             int  li = 0;
             int  c;
-            /* pushbackを先頭に戻す: pushbackが改行でなければそれを使う */
-            int first_char = -1;
+            /* Step1: pushbackを消費し、現在行(CODE name行)の残りを読み飛ばす */
             if (p->lex->pushback >= 0) {
-                first_char = p->lex->pushback;
+                c = p->lex->pushback;
                 p->lex->pushback = -1;
-                if (first_char == '\n') first_char = -1; /* 改行は捨てる */
+                if (c != '\n') {
+                    while ((c = fgetc(p->lex->fp)) != EOF && c != '\n')
+                        ;
+                }
+            } else {
+                while ((c = fgetc(p->lex->fp)) != EOF && c != '\n')
+                    ;
             }
-            /* 以降、END-CODEが出るまで行単位で読む */
+            /* Step2: END-CODEが出るまで行単位でアセンブリを読む */
             while (!feof(p->lex->fp)) {
                 li = 0;
-                /* first_char: pushbackから取り出した行先頭文字 */
-                if (first_char >= 0) {
-                    if (li < 254) linebuf[li++] = (char)first_char;
-                    first_char = -1;
-                }
                 while ((c = fgetc(p->lex->fp)) != EOF && c != '\n') {
                     if (li < 254) linebuf[li++] = (char)c;
                 }
