@@ -1,239 +1,187 @@
-# Makefile - YSD8800 ISA2.2 ビルドシステム
-# Version: 1.0
+# Makefile v1.3 — YUI OS / Dhrystone ビルドシステム
+#   Step 8-B（ビルドシステム改善）／yuios_makefile_design v0.2 準拠
+#   設計目標: build_road2.sh / 既知 Dhrystone 手順と「ビルド内容がバイト等価」。
+#            記述形式を shell→Makefile に変えるだけで、ツール入力バイト列・順序・
+#            オプションは一切変えない（56416 一致・819 一致を構造的に維持）。
+#   絶対ゲート: yuios=56416バイト完全一致（v1.3 実測確定・2026-08-12）
+#              ＋ TCR-ACK バイトパターン(21102300230190fc)=1箇所存在
+#              / dhrystone=819/48785/P:20 完全一致（v1.1 から不変）
 #
-# ターゲット:
-#   make tools       ホストツール (hasm22, emu22, scc22, disasm22) をビルド
-#   make kernel      カーネルをアセンブル
-#   make hello_c     Cサンプルをビルド・実行
-#   make hello_fs    Forthサンプルをビルド・実行
-#   make arith       scc22回帰テスト
-#   make all         全ビルド
-#   make clean       生成ファイルを削除
+#   改版履歴:
+#     v1.0 (2026-XX-XX) 初版。Step 8-B ビルドシステム改善で作成。
+#                       絶対ゲート dhrystone=826/48405/P:20 (scc23 v2.03)。
+#     v1.1 (2026-07-26) 【scc23 v2.04 対応・char ロード幅是正】絶対ゲートを
+#                       826/48405/P:20 → 819/48785/P:20 に更新
+#                       (cycles +380=+0.79% 増は char 読出が各+2命令になった
+#                        論理的結果・機能的正当性 P:20 は完全維持)。
+#                       V3 RTL 4初期化パターン ($00/$FF/$AA/$55) 全PASSで
+#                       初期値非依存を実証済 (CHAT121)。yuios=56416 は不変。
+#                       設計書 scc23_v2_04_char_load_fix_design_v1_0.md 準拠。
+#     v1.2 (2026-07-29) 【V8-b Pre / kernel v12.7 → v12.8 移行】
+#                       KERN_SRC を kernel_v12_7.asm → kernel_v12_8.asm に切替。
+#                       kernel v12.8 は V5 TCR-ACK 方式（RTL 側 2026-07-13 凍結
+#                       と整合）に対応。v12.7 は IRQ0_HANDLER に TCR bit5 書込
+#                       が無く RTL 上でタイマー永久停止するため V8-b（yuios.bin
+#                       RTL 実行）には v12.8 化が不可欠。
+#                       yuios 絶対ゲートは【56416 バイトのまま不変】（Pre-3 実測）。
+#                       設計書 v1.1 は+8B予想としたが、これは.orgパディング吸収
+#                       を見落とした構造的誤り。実装は+8B確かに追加(offset $003D
+#                       に `21 10 23 00 23 01 90 fc` の8Bパターン挿入)されている
+#                       が、次の.orgまでのゼロパディングが-8Bされ.binサイズ不変。
+#                       → 新 AC-1: yuios_road2.bin 内に TCR-ACK 8Bバイトパターン
+#                         `21102300230190fc` が【1箇所】存在すること。
+#                         v12.7版=0箇所/v12.8版=1箇所で弁別性確認済（Pre-3）。
+#                       REF_BIN は Pre-5 で新リファレンス yuios_ref_road2_I4.bin
+#                       を凍結してから確定（実サイズ 56416B ながら内容差分あり）。
+#                       本 v1.2 では旧値のまま残置（verify は意図的に失敗し
+#                       Pre-5 未完了を弁別）。
+#                       Dhrystone 絶対ゲート 819/48785/P:20 は不変（kernel 差異は
+#                       Dhrystone 実行経路に無関係）。
+#                       設計書 kernel_v12_8_migration_design_v1_2.md 準拠。
+#                       [Pre-5 完了 2026-07-29] 新リファレンス yuios_ref_road2_I4.bin
+#                       凍結完了。旧 I3 を yuios_ref_road2_I3_archived.bin に退避。
+#                       凍結票: yuios_ref_freeze_ticket_I4_v1_0.md。
+#                       [Pre-6 完了 2026-07-29] REF_BIN を I4 に切替・verify メッセージ
+#                       改善。AC-4a: クリーンビルド yuios_road2.bin と I4 が MD5 完全一致
+#                       (7a6a5b87afb1ef9f413a7d0c1360e706) で verify PASS。
+#                       AC-4b: make regress で Dhrystones/sec=819/cycles=48785/P:20 の
+#                       Dhrystone 絶対ゲート維持を実測確認・PASS。
+#     v1.3 (2026-08-12) 【D-3 対応・KERN_SRC 追従漏れ是正】
+#                       KERN_SRC を kernel_v12_8.asm → kernel_v12_11.asm に切替。
+#                       v12.11 は TKT-01/02/03/04（UART受信リングバッファ修正・
+#                       コンテキストスイッチA/Bレジスタ復元欠落修正等）を反映した
+#                       Phase A 確定版（kernel_v12_11.asm ヘッダ記載 md5 と整合）。
+#                       v12.8→v12.11 間の中間版（v12.9/v12.10 相当の修正）も
+#                       すべて本切替に含まれて反映される。
+#                       クリーンビルドで yuios_road2.bin = 56,416 バイト・
+#                       md5=599a7f9d1ebf103f81f58450ea1b6491 を実測確認。これは
+#                       kernel_v12_11.asm ヘッダ内記載のゴールデン値と完全一致
+#                       （yuios_paired_impl_ledger_v1_0.md 記載の確定値とも一致）。
+#                       REF_BIN を I4 → I5 に切替（新ゴールデン品 yuios_ref_road2_I5.bin
+#                       として凍結）。旧 I4 は yuios_ref_road2_I4_archived.bin に
+#                       退避（前版情報欠落防止）。凍結票: yuios_ref_freeze_ticket_I5_v1_0.md。
+#                       make regress で Dhrystones/sec=819/cycles=48785/P:20 の
+#                       絶対ゲート維持を実測確認・PASS（kernel差異はDhrystone実行
+#                       経路に無関係のため不変、が念のため実測で再確認）。
+#                       本修正は HANDOVER_CHAT134.md 記載の D-3（Makefile追従漏れ・
+#                       重要度「中」）に対応。B-5（文書整理）を待たず先行対処。
+#                       設計書: なし（軽微修正・かやぬまさん承認のうえ即時実施。
+#                       原則43の趣旨に照らし、既存ゴールデン値への追従のみで新規
+#                       設計判断を伴わないため設計書レビュー工程は省略）。
 
-MODE    ?= A
-CC      = gcc
-CFLAGS  = -std=c99 -O2 -Wall
-BUILD   = build
-SAMPLES = samples
-HASM    = ./hasm22
-EMU     = ./emu22
-SCC     = ./scc22/scc22
-DISASM  = ./disasm22
-FORCE   = ./force/force
+# ===== M-A 必須プリアンブル（設計書 §2.2）=====
+SHELL       := /bin/bash
+.SHELLFLAGS := -ec        # -e: 途中失敗で即停止 / -c: コマンド実行
+.ONESHELL:                # レシピ全体を単一シェルで実行（シェル変数を行またぎ保持）
 
-.PHONY: all tools kernel hello_c hello_fs arith run_kernel clean help
+# ===== ツール（既ビルド済み前提・カレント配置・§2.3）=====
+FORCE   := ./force
+HASM    := ./hasm23
+LNK     := ./lnk23
+SCC     := ./scc23
+EMU     := ./emu23
+MKFS    := python3 mkfs_yuifs.py
 
-all: tools kernel
+# ===== 入力ソース（本番・非改変）=====
+FORTH_SRC := kernel_forth_v0_10_18.fs
+KERN_SRC  := kernel_v12_11.asm    # v1.3: v12.8→v12.11 (TKT-01〜04 反映・Phase A 確定版)
+TGT       := ysd8800_kern.tgt
+PRIM      := ysd8800.prim
+DHRY_SRC  := dhry_timer.c
+HARNESS   := startup_harness23_v17.asm
 
-# ---- ホストツール ----
-tools: $(HASM) $(EMU) $(SCC) $(DISASM)
+# ===== 中間（実験ファイル名・KY28/38 本番非改変）=====
+FORTH_ASM := kf_r2.asm
+KERN_ASM  := kf_r2_kern.asm
+FORTH_OBJ := kf_r2.asm.obj
+KERN_OBJ  := kf_r2_kern.asm.obj
 
-$(HASM): hasm22.c
-	$(CC) $(CFLAGS) $< -o $@
-	@echo "  [OK] hasm22"
+# ===== 成果物（build_road2.sh と同名）=====
+YUIOS_BIN := yuios_road2.bin
+YUIOS_SYM := yuios_road2.sym
+DHRY_BIN  := dhry_final.bin
+DISK      := disk.img
+DISK_KB   := 32
+DISK_FILE := hello.txt
 
-$(EMU): emu22.c
-	$(CC) $(CFLAGS) -Wextra $< -o $@
-	@echo "  [OK] emu22"
+# ===== 検証（E-A: 凍結退避品・自己比較回避）=====
+# v1.2 Pre-5完了(2026-07-29): 新リファレンス yuios_ref_road2_I4.bin を凍結。
+#                             旧リファレンスは yuios_ref_road2_I3_archived.bin に
+#                             リネーム退避済（前版情報欠落防止）。
+#                             凍結票: yuios_ref_freeze_ticket_I4_v1_0.md 参照。
+#                             MD5(I4)= 7a6a5b87afb1ef9f413a7d0c1360e706 (56416B)
+#                             MD5(I3_archived)= a1f1001fe96d9c2e7b4db8e47d4046e4 (56416B)
+#                             サイズ同一・内容271バイト差のためハッシュ照合必須。
+# v1.3 D-3対応(2026-08-12):  新リファレンス yuios_ref_road2_I5.bin を凍結
+#                             （KERN_SRC=kernel_v12_11.asm 反映品）。
+#                             旧 I4 は yuios_ref_road2_I4_archived.bin に退避。
+#                             凍結票: yuios_ref_freeze_ticket_I5_v1_0.md 参照。
+#                             MD5(I5)= 599a7f9d1ebf103f81f58450ea1b6491 (56416B)
+#                             ※この値は kernel_v12_11.asm ヘッダ記載のゴールデン値
+#                               および yuios_paired_impl_ledger_v1_0.md の確定値と
+#                               完全一致（3点照合済）。
+REF_BIN   := yuios_ref_road2_I5.bin
 
-$(SCC): scc22/scc22.c
-	$(CC) $(CFLAGS) $< -o $@
-	@echo "  [OK] scc22"
+.PHONY: all yuios dhrystone disk run regress verify clean
 
-$(DISASM): disasm22.c
-	$(CC) $(CFLAGS) $< -o $@
-	@echo "  [OK] disasm22"
+all: yuios
 
-# ---- カーネル ----
-$(BUILD):
-	mkdir -p $(BUILD)
+# ---- yuios 道2ビルド（S1〜S7・build_road2.sh とバイト等価）----
+$(YUIOS_BIN): $(FORTH_SRC) $(KERN_SRC) $(TGT) $(PRIM) mk_post1.sh
+	# S1 Force（forthカーネルコンパイル）
+	$(FORCE) --target ysd8800_kern --tgt-file $(TGT) --prim-file $(PRIM) $(FORTH_SRC) -o $(FORTH_ASM)
+	# S2 後処理1（#WORD_xxx 混入行 全自動抽出・No.1）build_road2.sh Step2 等価
+	bash ./mk_post1.sh $(FORTH_ASM) $(HASM)
+	# S3 後処理2（WORD_OS_START 定義直前に .global 挿入・案F2）
+	awk '/^WORD_OS_START:/ && !d { print ".global WORD_OS_START"; d=1 } { print }' \
+	    $(FORTH_ASM) > $(FORTH_ASM).g && mv $(FORTH_ASM).g $(FORTH_ASM)
+	# S4 hasm23 -c（forth.obj・load_addr=$$5100・has_org）
+	$(HASM) -c $(FORTH_ASM)
+	# S5 kernel UNDEF 化（#$$e96e -> #$$WORD_OS_START）
+	sed 's|#\$$e96e|#\$$WORD_OS_START|g' $(KERN_SRC) > $(KERN_ASM)
+	# S6 hasm23 -c（kernel.obj・load_addr=$$0000・UNDEF reloc=2）
+	$(HASM) -c $(KERN_ASM)
+	# S7 lnk23（--machine force 必須・L-E）
+	$(LNK) -o $(YUIOS_BIN) --sym $(YUIOS_SYM) --machine force $(FORTH_OBJ) $(KERN_OBJ)
 
-kernel: $(BUILD)/kernel.bin
+yuios: $(YUIOS_BIN)
 
-$(BUILD)/kernel.bin: kernel.asm | $(BUILD)
-	$(HASM) kernel.asm
-	cp kernel.asm.bin $@
-	cp kernel.asm.sym $(BUILD)/kernel.sym
-	@echo "  [OK] kernel -> $@"
+# ---- dhrystone ビルド（D1〜D7・L-B 準拠）----
+$(DHRY_BIN): $(DHRY_SRC) $(HARNESS)
+	# D1 scc23（3オプション必須・L-B）
+	$(SCC) --code-org 0x0400 --data-org 0x4000 --runtime-org 0x0100 -o dhry.asm $(DHRY_SRC)
+	# D2-D3 _main 取得
+	$(HASM) dhry.asm
+	# D4 JSR _main 直書き（.ONESHELL 前提・MAIN を行またぎ保持）
+	MAIN=$$(grep -E '^[0-9a-f]+ _main$$' dhry.asm.sym | awk '{print $$1}')
+	sed -E "s/JSR[[:space:]]+_main/JSR  \$$$${MAIN}/" $(HARNESS) > startup_harness23.asm
+	# D5 hasm23
+	$(HASM) startup_harness23.asm
+	# D6 lds 自動生成（No.4 の核心：手書き lds 廃止）
+	printf 'SECTION code 0x0000 dhry.asm.bin\nSECTION harness 0x0000 startup_harness23.asm.bin\n' > dhry.lds
+	# D7 lnk23（machine既定=baremetal）
+	$(LNK) -o $(DHRY_BIN) --sym dhry_final.sym dhry.lds
 
-# ---- arith 回帰テスト ----
-arith: tools | $(BUILD)
-	@mkdir -p $(BUILD)/arith
-	$(SCC) scc22/test/arith.c -o $(BUILD)/arith/arith.asm
-	$(HASM) $(BUILD)/arith/arith.asm
-	python3 scripts/make_harness.py $(BUILD)/arith/arith.asm.sym \
-		> $(BUILD)/arith/harness.asm
-	$(HASM) $(BUILD)/arith/harness.asm
-	python3 scripts/merge_simple.py \
-		$(BUILD)/arith/arith.asm.bin \
-		$(BUILD)/arith/harness.asm.bin \
-		$(BUILD)/arith/arith.bin
-	@echo "=== arith test ==="
-	$(EMU) $(BUILD)/arith/arith.bin -n 5000000
+dhrystone: $(DHRY_BIN)
 
-# ---- Cサンプル: hello ----
-hello_c: tools $(BUILD)/kernel.bin | $(BUILD)
-	@mkdir -p $(BUILD)/hello_c
-	$(SCC) $(SAMPLES)/hello/hello.c -o $(BUILD)/hello_c/hello.asm
-	$(HASM) $(BUILD)/hello_c/hello.asm
-	python3 scripts/make_harness.py $(BUILD)/hello_c/hello.asm.sym \
-		> $(BUILD)/hello_c/harness.asm
-	$(HASM) $(BUILD)/hello_c/harness.asm
-	python3 scripts/merge_simple.py \
-		$(BUILD)/hello_c/hello.asm.bin \
-		$(BUILD)/hello_c/harness.asm.bin \
-		$(BUILD)/hello_c/hello.bin
-	@echo "=== hello_c ==="
-	$(EMU) $(BUILD)/hello_c/hello.bin -n 500000
+# ---- disk / run / regress / verify / clean ----
+disk:
+	$(MKFS) $(DISK) --size-kb $(DISK_KB) --add-file $(DISK_FILE)
 
-# ---- Forthサンプル: hello ----
-hello_fs: tools | $(BUILD)
-	@mkdir -p $(BUILD)/hello_fs
-	cd force && ./force ../$(SAMPLES)/hello/hello.fs -o ../$(BUILD)/hello_fs/hello.asm
-	$(HASM) $(BUILD)/hello_fs/hello.asm
-	python3 scripts/make_harness.py $(BUILD)/hello_fs/hello.asm.sym \
-		> $(BUILD)/hello_fs/harness.asm
-	$(HASM) $(BUILD)/hello_fs/harness.asm
-	python3 scripts/merge_simple.py \
-		$(BUILD)/hello_fs/hello.asm.bin \
-		$(BUILD)/hello_fs/harness.asm.bin \
-		$(BUILD)/hello_fs/hello.bin
-	@echo "=== hello_fs ==="
-	$(EMU) $(BUILD)/hello_fs/hello.bin -n 500000
+run: yuios disk
+	timeout 30 $(EMU) $(YUIOS_BIN) -q --disk $(DISK)
 
-# ---- カーネル単体 ----
-run_kernel: $(BUILD)/kernel.bin
-	$(EMU) $(BUILD)/kernel.bin -n 200000
+regress: dhrystone
+	@timeout 30 $(EMU) $(DHRY_BIN) -q 2>&1 | grep -iE 'Dhrystones/sec|cycles|P:'
+	@echo '期待値: Dhrystones/sec=819 / cycles=48785 / P:20'
 
-# ---- クリーン ----
+verify: yuios
+	@if cmp -s $(YUIOS_BIN) $(REF_BIN); then \
+	   echo 'VERIFY OK: $(YUIOS_BIN) は基準 $(REF_BIN) と全56416バイト一致'; \
+	 else echo 'VERIFY FAIL: $(YUIOS_BIN) と基準 $(REF_BIN) の内容差あり（要調査）'; exit 1; fi
+
 clean:
-	rm -rf $(BUILD)
-	rm -f *.bin *.sym *.dbg
-	rm -f scc22/test/*.bin scc22/test/*.sym
-
-help:
-	@echo "YSD8800 ISA2.2 Build System v1.0"
-	@echo ""
-	@echo "  make tools      Build host tools"
-	@echo "  make kernel     Assemble kernel"
-	@echo "  make arith      scc22 regression test"
-	@echo "  make hello_c    C hello world"
-	@echo "  make hello_fs   Forth hello world"
-	@echo "  make all        tools + kernel"
-	@echo "  make clean      Remove artifacts"
-
-# ============================================================
-# counter サンプル
-# ============================================================
-counter_c: tools | $(BUILD)
-	@mkdir -p $(BUILD)/counter_c
-	$(SCC) $(SAMPLES)/counter/counter.c -o $(BUILD)/counter_c/counter.asm
-	$(HASM) $(BUILD)/counter_c/counter.asm
-	python3 scripts/make_harness.py $(BUILD)/counter_c/counter.asm.sym \
-		> $(BUILD)/counter_c/harness.asm
-	$(HASM) $(BUILD)/counter_c/harness.asm
-	python3 scripts/merge_simple.py \
-		$(BUILD)/counter_c/counter.asm.bin \
-		$(BUILD)/counter_c/harness.asm.bin \
-		$(BUILD)/counter_c/counter.bin
-	@echo "=== counter_c ==="
-	echo 's 500000\nq' | $(EMU) $(BUILD)/counter_c/counter.bin
-
-counter_fs: tools | $(BUILD)
-	@mkdir -p $(BUILD)/counter_fs
-	cd force && ./force ../$(SAMPLES)/counter/counter.fs \
-		-o ../$(BUILD)/counter_fs/counter.asm
-	$(HASM) $(BUILD)/counter_fs/counter.asm
-	python3 scripts/make_harness.py $(BUILD)/counter_fs/counter.asm.sym \
-		> $(BUILD)/counter_fs/harness.asm
-	$(HASM) $(BUILD)/counter_fs/harness.asm
-	python3 scripts/merge_simple.py \
-		$(BUILD)/counter_fs/counter.asm.bin \
-		$(BUILD)/counter_fs/harness.asm.bin \
-		$(BUILD)/counter_fs/counter.bin
-	@echo "=== counter_fs ==="
-	echo 's 500000\nq' | $(EMU) $(BUILD)/counter_fs/counter.bin
-
-# ============================================================
-# fibonacci サンプル
-# ============================================================
-fibonacci: tools | $(BUILD)
-	@mkdir -p $(BUILD)/fibonacci
-	$(SCC) $(SAMPLES)/fibonacci/fibonacci.c -o $(BUILD)/fibonacci/fib.asm
-	$(HASM) $(BUILD)/fibonacci/fib.asm
-	python3 scripts/make_harness.py $(BUILD)/fibonacci/fib.asm.sym \
-		> $(BUILD)/fibonacci/harness.asm
-	$(HASM) $(BUILD)/fibonacci/harness.asm
-	python3 scripts/merge_simple.py \
-		$(BUILD)/fibonacci/fib.asm.bin \
-		$(BUILD)/fibonacci/harness.asm.bin \
-		$(BUILD)/fibonacci/fib.bin
-	@echo "=== fibonacci ==="
-	echo 's 10000000\nq' | $(EMU) $(BUILD)/fibonacci/fib.bin
-
-# ============================================================
-# calc サンプル
-# ============================================================
-calc: tools | $(BUILD)
-	@mkdir -p $(BUILD)/calc
-	$(SCC) $(SAMPLES)/calc/calc.c -o $(BUILD)/calc/calc.asm
-	$(HASM) $(BUILD)/calc/calc.asm
-	python3 scripts/make_harness.py $(BUILD)/calc/calc.asm.sym \
-		> $(BUILD)/calc/harness.asm
-	$(HASM) $(BUILD)/calc/harness.asm
-	python3 scripts/merge_simple.py \
-		$(BUILD)/calc/calc.asm.bin \
-		$(BUILD)/calc/harness.asm.bin \
-		$(BUILD)/calc/calc.bin
-	@echo "=== calc ==="
-	echo 's 5000000\nq' | $(EMU) $(BUILD)/calc/calc.bin
-
-# ============================================================
-# 全サンプル
-# ============================================================
-samples: hello_c hello_fs counter_c counter_fs fibonacci calc task_demo
-	@echo "=== All samples built ==="
-
-# ============================================================
-# task_demo - マルチタスクデモ (Forth + カーネル)
-# ============================================================
-task_demo: tools $(BUILD)/kernel.bin | $(BUILD)
-	@mkdir -p $(BUILD)/task_demo
-	cd force && ./force --target ysd8800_kern \
-		--prim-file targets/ysd8800.prim \
-		../$(SAMPLES)/task_demo/task_demo.fs \
-		-o ../$(BUILD)/task_demo/task_demo.asm
-	$(HASM) $(BUILD)/task_demo/task_demo.asm
-	python3 scripts/make_task_patch.py \
-		$(BUILD)/task_demo/task_demo.asm.sym \
-		$(BUILD)/task_demo/task_patch.asm
-	$(HASM) $(BUILD)/task_demo/task_patch.asm
-	python3 scripts/merge_kern.py \
-		$(BUILD)/kernel.bin \
-		$(BUILD)/task_demo/task_demo.asm.bin \
-		$(BUILD)/task_demo/task_patch.asm.bin \
-		$(BUILD)/task_demo/task_demo.bin
-	@echo "=== task_demo ==="
-	$(EMU) $(BUILD)/task_demo/task_demo.bin -q
-
-task_demo_v2: tools $(BUILD)/kernel.bin | $(BUILD)
-	@mkdir -p $(BUILD)/task_demo_v2
-	cat kernel_forth.fs \
-	    $(SAMPLES)/task_demo/task_demo_v2.fs \
-	    > $(BUILD)/task_demo_v2/combined.fs
-	cd force && ./force --target ysd8800_kern \
-		--prim-file targets/ysd8800.prim \
-		../$(BUILD)/task_demo_v2/combined.fs \
-		-o ../$(BUILD)/task_demo_v2/task_demo_v2.asm
-	$(HASM) $(BUILD)/task_demo_v2/task_demo_v2.asm
-	python3 scripts/make_task_patch.py \
-		$(BUILD)/task_demo_v2/task_demo_v2.asm.sym \
-		$(BUILD)/task_demo_v2/task_patch.asm
-	$(HASM) $(BUILD)/task_demo_v2/task_patch.asm
-	python3 scripts/merge_kern.py \
-		$(BUILD)/kernel.bin \
-		$(BUILD)/task_demo_v2/task_demo_v2.asm.bin \
-		$(BUILD)/task_demo_v2/task_patch.asm.bin \
-		$(BUILD)/task_demo_v2/task_demo_v2.bin
-	@echo "=== task_demo_v2 ==="
-	$(EMU) $(BUILD)/task_demo_v2/task_demo_v2.bin -q
+	rm -f $(FORTH_ASM)* $(KERN_ASM)* $(FORTH_OBJ) $(KERN_OBJ) \
+	      dhry.asm* startup_harness23.asm* dhry.lds \
+	      $(YUIOS_BIN) $(YUIOS_SYM) $(DHRY_BIN) dhry_final.sym
+	# 注：disk.img は誤消去防止のため clean 対象外（明示 rm を推奨）
