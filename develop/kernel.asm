@@ -1,1 +1,1 @@
-../microkernel/kernel.asm
+../src/os/microkernel/kernel.asm
