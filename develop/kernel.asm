@@ -1,1 +1,0 @@
-../src/os/microkernel/kernel.asm

@@ -1,1 +1,0 @@
-../../src/toolchain/startup_harness23_v15.asm
