@@ -1,8 +1,8 @@
 # YSD8800
 
-公式ページ: https://yukarisemicon.netlify.app/works/ysd8800/
-
 オリジナル16bit CPU YSD8800のページへようこそ。
+
+公式ページ: https://yukarisemicon.netlify.app/works/ysd8800/
 
 YUI OS（YSD8800上で動く自作マイクロカーネルOS）、および対応するツールチェーン（アセンブラ・リンカ・Cコンパイラ・Forthクロスコンパイラ・エミュレータ）とFPGA実装（SystemVerilog RTL）を開発しています。
 
@@ -35,6 +35,10 @@ YSD8800/
 ├── scripts/               ビルド・監査・生成スクリプト類
 └── dist/                 YSD8800向け配布物（ROM/ディスクイメージ等のバイナリ）
 ```
+
+## 開発環境
+
+- Linux Debian12
 
 ## ライセンス
 
