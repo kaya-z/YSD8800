@@ -1,0 +1,45 @@
+Dhrystoneビルド方法(超面倒くさい)
+
+
+(0)ツールを用意する。
+
+scc23_v2_05.c	   Cコンパイラソース
+hasm23_v1_04.c   アセンブラソース
+lnk23_v2_01.c	   リンカソース
+emu23_v111.c	   エミュレータソース
+dhry_timer.c	   Dhrystoneソース（タイマー計測ヘルパ組込済み）
+startup_harness23_v17.asm	起動ハーネス
+
+(1)Cコンパイル（scc23）
+./scc23  --code-org 0x0400 --data-org 0x4000 --runtime-org 0x0100  -o dhry.asm dhry_timer.c
+
+(2)一次アセンブル（_mainアドレス取得のため）
+./hasm23 dhry.asm
+
+(3)_mainアドレスの抽出
+MAIN=$(grep -E '^[0-9a-f]+ _main$' dhry.asm.sym | awk '{print $1}')
+echo "MAIN=$MAIN"
+# 期待値: 04cc 付近
+
+(4)起動ハーネスへの_mainアドレス直書き（sed）
+sed -E "s/JSR[[:space:]]+_main/JSR  \$${MAIN}/" \
+    startup_harness23_v17.asm > startup_harness23.asm
+
+(5)ハーネスのアセンブル
+./hasm23 startup_harness23.asm
+
+(6)リンクスクリプト生成
+printf 'SECTION code 0x0000 dhry.asm.bin\nSECTION harness 0x0000 startup_harness23.asm.bin\n' > dhry.lds
+
+(7)リンク
+./lnk23 -o dhry_final.bin --sym dhry_final.sym dhry.lds
+
+(8)実行
+timeout 30 ./emu23 dhry_final.bin -q
+
+N=10
+--- Dhrystones/sec = 819 ---
+    cycles=48785  elapsed=12196 us
+    cpu_freq=4000000 Hz  Number_Of_Runs=10
+P:20[YSD8002] cpu_freq=4000000 Hz  irq_hz=100
+[YSD8002] total_cycles=83993  elapsed=20 ms
