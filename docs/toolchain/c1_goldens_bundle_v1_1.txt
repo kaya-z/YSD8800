@@ -1,0 +1,3662 @@
+# C-1 golden asm bundle  (scc23 Phase 1 / C-1)
+#
+# 版数     : v1.1
+# 日付     : 2026-08-13
+# golden基準版: scc23 v2.06
+# 対象     : tests_c1 マトリクステスト（compile_ok 12ケース）
+#
+# ★このファイルの目的★
+#   goldens/*.golden.asm 12件を1ファイルに束ねたもの。
+#   プロジェクトナレッジは tar.gz を扱えないため、テキスト1本にまとめて保存する。
+#   golden は v2.06 で凍結した生成コードの実体であり ★再生成できない★
+#   （ソースからのビルドは「別版コンパイラで作り直すこと」であり凍結の意味を失う）。
+#
+# ★展開方法★
+#   python3 gen_matrix.py --unbundle c1_goldens_bundle_v1_1.txt
+#
+# ★golden 更新ルール（厳守・設計書 §7.5）★
+#   1. golden との差分は「回帰疑い」として調査する（自動更新禁止）
+#   2. 更新は仕様変更が正当と判断された場合のみ。変更理由の記録と
+#      golden_version の刻み直しが必須
+#   3. 無検討の上書きは禁止
+#   4. Dhrystone 絶対ゲート（826/48405/P:20/21846B）と併走判定する
+#   5. golden 更新の判断は設計レビューを経る（原則43）
+#
+# 区切り形式: ==== FILE: <名前> ====
+#   各ファイルの内容は次の区切り行の直前までとし、末尾改行は展開側で付与する。
+#   (v1.1: v1.0 は展開時に余分な空行が1行入る不具合があったため修正)
+
+
+==== FILE: m1_f_add_c_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_f_add_c_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    JSR  _getval2
+    LDW  B, [SP]
+    ADDI SP, #2
+    ADD  B, A
+    MOV  A, B
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #2
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #640
+    JMP  _L_0003
+_L_0003:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval2 ---
+_getval2:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #1024
+    JMP  _L_0004
+_L_0004:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_f_add_k_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_f_add_k_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    LDW  A, #512
+    LDW  B, [SP]
+    ADDI SP, #2
+    ADD  B, A
+    MOV  A, B
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #2
+    JMP  _L_0001
+_L_0001:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #640
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_f_add_v_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_f_add_v_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    SUBI SP, #2
+    LDW  A, #768
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #6
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    LDW  A, [X + #$FFFA]
+    LDW  B, [SP]
+    ADDI SP, #2
+    ADD  B, A
+    MOV  A, B
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #4
+    JMP  _L_0001
+_L_0001:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #640
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_f_div_c_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_f_div_c_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    JSR  _getval2
+    LDW  B, [SP]
+    ADDI SP, #2
+    JSR  _fdiv
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #2
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #640
+    JMP  _L_0003
+_L_0003:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval2 ---
+_getval2:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #1024
+    JMP  _L_0004
+_L_0004:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_C_MUL_A EQU $DBF4
+_C_MUL_B EQU $DBF6
+_C_MUL_R EQU $DBF8
+_C_DIV_A EQU $DBFA
+_C_DIV_B EQU $DBFC
+_fdiv:
+    PUSH X
+    CMPI A, #0
+    BNE  _fdiv_nz
+    LDW  A, #0
+    POP  X
+    RET
+_fdiv_nz:
+    STW  B, [_C_MUL_A]
+    STW  A, [_C_MUL_B]
+    LDW  A, #0
+    STW  A, [_C_DIV_B]
+    STW  A, [_C_MUL_R]
+    STW  A, [_C_DIV_A]
+    LDW  A, [_C_MUL_A]
+    CMPI A, #0
+    BGE  _fdiv_a_pos
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_A]
+    LDW  A, [_C_DIV_B]
+    XORI A, #1
+    STW  A, [_C_DIV_B]
+_fdiv_a_pos:
+    LDW  A, [_C_MUL_B]
+    CMPI A, #0
+    BGE  _fdiv_b_pos
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_B]
+    LDW  A, [_C_DIV_B]
+    XORI A, #1
+    STW  A, [_C_DIV_B]
+_fdiv_b_pos:
+    LDW  X, #0
+_fdiv_loop:
+    CMPI X, #24
+    BGE  _fdiv_loop_end
+    CMPI X, #16
+    BGE  _fdiv_bit0
+    LDW  A, [_C_MUL_A]
+    LDW  B, #15
+    SHR  A, B
+    ANDI A, #1
+    LDW  B, [_C_MUL_A]
+    PUSH A
+    MOV  A, B
+    LDW  B, #1
+    SHL  A, B
+    STW  A, [_C_MUL_A]
+    POP  A
+    JMP  _fdiv_haverbit
+_fdiv_bit0:
+    LDW  A, #0
+_fdiv_haverbit:
+    LDW  B, [_C_DIV_A]
+    PUSH A
+    MOV  A, B
+    LDW  B, #1
+    SHL  A, B
+    MOV  B, A
+    POP  A
+    OR   B, A
+    STW  B, [_C_DIV_A]
+    LDW  A, [_C_MUL_R]
+    LDW  B, #1
+    SHL  A, B
+    STW  A, [_C_MUL_R]
+    LDW  A, [_C_DIV_A]
+    LDW  B, [_C_MUL_B]
+    CMP  A, B
+    BLT  _fdiv_noupd
+    SUB  A, B
+    STW  A, [_C_DIV_A]
+    LDW  A, [_C_MUL_R]
+    ORI  A, #1
+    STW  A, [_C_MUL_R]
+_fdiv_noupd:
+    ADDI X, #1
+    JMP  _fdiv_loop
+_fdiv_loop_end:
+    LDW  A, [_C_DIV_B]
+    CMPI A, #0
+    BEQ  _fdiv_ret
+    LDW  A, [_C_MUL_R]
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_R]
+_fdiv_ret:
+    LDW  A, [_C_MUL_R]
+    POP  X
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_f_div_k_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_f_div_k_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    LDW  A, #512
+    LDW  B, [SP]
+    ADDI SP, #2
+    JSR  _fdiv
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #2
+    JMP  _L_0001
+_L_0001:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #640
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_C_MUL_A EQU $DBF4
+_C_MUL_B EQU $DBF6
+_C_MUL_R EQU $DBF8
+_C_DIV_A EQU $DBFA
+_C_DIV_B EQU $DBFC
+_fdiv:
+    PUSH X
+    CMPI A, #0
+    BNE  _fdiv_nz
+    LDW  A, #0
+    POP  X
+    RET
+_fdiv_nz:
+    STW  B, [_C_MUL_A]
+    STW  A, [_C_MUL_B]
+    LDW  A, #0
+    STW  A, [_C_DIV_B]
+    STW  A, [_C_MUL_R]
+    STW  A, [_C_DIV_A]
+    LDW  A, [_C_MUL_A]
+    CMPI A, #0
+    BGE  _fdiv_a_pos
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_A]
+    LDW  A, [_C_DIV_B]
+    XORI A, #1
+    STW  A, [_C_DIV_B]
+_fdiv_a_pos:
+    LDW  A, [_C_MUL_B]
+    CMPI A, #0
+    BGE  _fdiv_b_pos
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_B]
+    LDW  A, [_C_DIV_B]
+    XORI A, #1
+    STW  A, [_C_DIV_B]
+_fdiv_b_pos:
+    LDW  X, #0
+_fdiv_loop:
+    CMPI X, #24
+    BGE  _fdiv_loop_end
+    CMPI X, #16
+    BGE  _fdiv_bit0
+    LDW  A, [_C_MUL_A]
+    LDW  B, #15
+    SHR  A, B
+    ANDI A, #1
+    LDW  B, [_C_MUL_A]
+    PUSH A
+    MOV  A, B
+    LDW  B, #1
+    SHL  A, B
+    STW  A, [_C_MUL_A]
+    POP  A
+    JMP  _fdiv_haverbit
+_fdiv_bit0:
+    LDW  A, #0
+_fdiv_haverbit:
+    LDW  B, [_C_DIV_A]
+    PUSH A
+    MOV  A, B
+    LDW  B, #1
+    SHL  A, B
+    MOV  B, A
+    POP  A
+    OR   B, A
+    STW  B, [_C_DIV_A]
+    LDW  A, [_C_MUL_R]
+    LDW  B, #1
+    SHL  A, B
+    STW  A, [_C_MUL_R]
+    LDW  A, [_C_DIV_A]
+    LDW  B, [_C_MUL_B]
+    CMP  A, B
+    BLT  _fdiv_noupd
+    SUB  A, B
+    STW  A, [_C_DIV_A]
+    LDW  A, [_C_MUL_R]
+    ORI  A, #1
+    STW  A, [_C_MUL_R]
+_fdiv_noupd:
+    ADDI X, #1
+    JMP  _fdiv_loop
+_fdiv_loop_end:
+    LDW  A, [_C_DIV_B]
+    CMPI A, #0
+    BEQ  _fdiv_ret
+    LDW  A, [_C_MUL_R]
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_R]
+_fdiv_ret:
+    LDW  A, [_C_MUL_R]
+    POP  X
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_f_div_v_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_f_div_v_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    SUBI SP, #2
+    LDW  A, #768
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #6
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    LDW  A, [X + #$FFFA]
+    LDW  B, [SP]
+    ADDI SP, #2
+    JSR  _fdiv
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #4
+    JMP  _L_0001
+_L_0001:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #640
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_C_MUL_A EQU $DBF4
+_C_MUL_B EQU $DBF6
+_C_MUL_R EQU $DBF8
+_C_DIV_A EQU $DBFA
+_C_DIV_B EQU $DBFC
+_fdiv:
+    PUSH X
+    CMPI A, #0
+    BNE  _fdiv_nz
+    LDW  A, #0
+    POP  X
+    RET
+_fdiv_nz:
+    STW  B, [_C_MUL_A]
+    STW  A, [_C_MUL_B]
+    LDW  A, #0
+    STW  A, [_C_DIV_B]
+    STW  A, [_C_MUL_R]
+    STW  A, [_C_DIV_A]
+    LDW  A, [_C_MUL_A]
+    CMPI A, #0
+    BGE  _fdiv_a_pos
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_A]
+    LDW  A, [_C_DIV_B]
+    XORI A, #1
+    STW  A, [_C_DIV_B]
+_fdiv_a_pos:
+    LDW  A, [_C_MUL_B]
+    CMPI A, #0
+    BGE  _fdiv_b_pos
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_B]
+    LDW  A, [_C_DIV_B]
+    XORI A, #1
+    STW  A, [_C_DIV_B]
+_fdiv_b_pos:
+    LDW  X, #0
+_fdiv_loop:
+    CMPI X, #24
+    BGE  _fdiv_loop_end
+    CMPI X, #16
+    BGE  _fdiv_bit0
+    LDW  A, [_C_MUL_A]
+    LDW  B, #15
+    SHR  A, B
+    ANDI A, #1
+    LDW  B, [_C_MUL_A]
+    PUSH A
+    MOV  A, B
+    LDW  B, #1
+    SHL  A, B
+    STW  A, [_C_MUL_A]
+    POP  A
+    JMP  _fdiv_haverbit
+_fdiv_bit0:
+    LDW  A, #0
+_fdiv_haverbit:
+    LDW  B, [_C_DIV_A]
+    PUSH A
+    MOV  A, B
+    LDW  B, #1
+    SHL  A, B
+    MOV  B, A
+    POP  A
+    OR   B, A
+    STW  B, [_C_DIV_A]
+    LDW  A, [_C_MUL_R]
+    LDW  B, #1
+    SHL  A, B
+    STW  A, [_C_MUL_R]
+    LDW  A, [_C_DIV_A]
+    LDW  B, [_C_MUL_B]
+    CMP  A, B
+    BLT  _fdiv_noupd
+    SUB  A, B
+    STW  A, [_C_DIV_A]
+    LDW  A, [_C_MUL_R]
+    ORI  A, #1
+    STW  A, [_C_MUL_R]
+_fdiv_noupd:
+    ADDI X, #1
+    JMP  _fdiv_loop
+_fdiv_loop_end:
+    LDW  A, [_C_DIV_B]
+    CMPI A, #0
+    BEQ  _fdiv_ret
+    LDW  A, [_C_MUL_R]
+    NOT  A
+    ADDI A, #1
+    STW  A, [_C_MUL_R]
+_fdiv_ret:
+    LDW  A, [_C_MUL_R]
+    POP  X
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_i_add_c_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_i_add_c_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    JSR  _getval2
+    LDW  B, [SP]
+    ADDI SP, #2
+    ADD  B, A
+    MOV  A, B
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #2
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #5
+    JMP  _L_0003
+_L_0003:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval2 ---
+_getval2:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #4
+    JMP  _L_0004
+_L_0004:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_i_add_k_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_i_add_k_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    LDW  A, #2
+    LDW  B, [SP]
+    ADDI SP, #2
+    ADD  B, A
+    MOV  A, B
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #2
+    JMP  _L_0001
+_L_0001:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #5
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_i_add_v_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_i_add_v_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    SUBI SP, #2
+    LDW  A, #3
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #6
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    LDW  A, [X + #$FFFA]
+    LDW  B, [SP]
+    ADDI SP, #2
+    ADD  B, A
+    MOV  A, B
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #4
+    JMP  _L_0001
+_L_0001:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #5
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_i_div_c_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_i_div_c_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    JSR  _getval2
+    LDW  B, [SP]
+    ADDI SP, #2
+    JSR  _cc_div
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #2
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #5
+    JMP  _L_0003
+_L_0003:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval2 ---
+_getval2:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #4
+    JMP  _L_0004
+_L_0004:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_C_DIV_A EQU $DBFA
+_C_DIV_B EQU $DBFC
+_C_DIV_Q EQU $DBFE
+_cc_div:
+    CMPI A, #0
+    BEQ  _ccdiv_zero
+    STW  A, [_C_DIV_A]
+    STW  B, [_C_DIV_B]
+    LDW  A, #0
+    STW  A, [_C_DIV_Q]
+_ccdiv_loop:
+    LDW  A, [_C_DIV_B]
+    LDW  B, [_C_DIV_A]
+    CMP  A, B
+    BLT  _ccdiv_done
+    SUB  A, B
+    STW  A, [_C_DIV_B]
+    LDW  A, [_C_DIV_Q]
+    ADDI A, #1
+    STW  A, [_C_DIV_Q]
+    JMP  _ccdiv_loop
+_ccdiv_done:
+    LDW  A, [_C_DIV_Q]
+    RET
+_ccdiv_zero:
+    LDW  A, #0
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_i_div_k_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_i_div_k_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    LDW  A, #2
+    LDW  B, [SP]
+    ADDI SP, #2
+    JSR  _cc_div
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #2
+    JMP  _L_0001
+_L_0001:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #5
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_C_DIV_A EQU $DBFA
+_C_DIV_B EQU $DBFC
+_C_DIV_Q EQU $DBFE
+_cc_div:
+    CMPI A, #0
+    BEQ  _ccdiv_zero
+    STW  A, [_C_DIV_A]
+    STW  B, [_C_DIV_B]
+    LDW  A, #0
+    STW  A, [_C_DIV_Q]
+_ccdiv_loop:
+    LDW  A, [_C_DIV_B]
+    LDW  B, [_C_DIV_A]
+    CMP  A, B
+    BLT  _ccdiv_done
+    SUB  A, B
+    STW  A, [_C_DIV_B]
+    LDW  A, [_C_DIV_Q]
+    ADDI A, #1
+    STW  A, [_C_DIV_Q]
+    JMP  _ccdiv_loop
+_ccdiv_done:
+    LDW  A, [_C_DIV_Q]
+    RET
+_ccdiv_zero:
+    LDW  A, #0
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== FILE: m1_i_div_v_p.golden.asm ====
+; scc23 v2.06 (2026-08-13)  source: m1_i_div_v_p.c
+; Target: YSD8800 ISA2.3
+;
+    .org $D440
+
+; ============================================================
+; User code
+; ============================================================
+    JMP  _main      ; entry point ($D440)
+
+
+; --- main ---
+_main:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    SUBI SP, #2
+    SUBI SP, #2
+    LDW  A, #3
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #6
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    JSR  _getval
+    SUBI SP, #2
+    STW  A, [SP]
+    LDW  A, [X + #$FFFA]
+    LDW  B, [SP]
+    ADDI SP, #2
+    JSR  _cc_div
+    SUBI SP, #2
+    STW  A, [SP]
+    MOV  A, X
+    SUBI A, #4
+    LDW  B, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, A
+    STW  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    MOV  A, B
+    LDW  A, #0
+    ADDI SP, #4
+    JMP  _L_0001
+_L_0001:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+; --- getval ---
+_getval:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    SUBI SP, #2
+    LDW  A, #5
+    JMP  _L_0002
+_L_0002:
+    LDW  X, [X]
+    ADDI SP, #2
+    ADDI SP, #2
+    RET
+
+    .org $D780
+
+; ============================================================
+; C Runtime  org=$D780
+; ============================================================
+
+_putchar:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+_putchar_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _putchar_wait
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_getchar:
+    LDW  A, [$FC84]
+    CMPI A, #0
+    BEQ  _getchar
+    LDW  A, [$FC82]
+    RET
+
+_puts:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+_puts_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _puts_done
+_puts_wait:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_wait
+    STW  A, [$FC80]
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    JMP  _puts_loop
+_puts_done:
+    LDW  B, [$FC84]
+    CMPI B, #0
+    BEQ  _puts_done
+    LDW  A, #10
+    STW  A, [$FC80]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    ; [M23] dst=args[0]=[X+4], src=args[1]=[X+6]
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  B, [X + #6]
+    STW  B, [$DBEC]
+_strcpy_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    CMPI A, #0
+    BEQ  _strcpy_done
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcpy_loop
+_strcpy_done:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_strcmp:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEA]
+    LDW  A, [X + #6]
+    STW  A, [$DBEC]
+_strcmp_loop:
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEA]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  A, [SP]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEC]
+    LDB  B, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [SP]
+    ADDI SP, #2
+    CMP  A, B
+    BNE  _strcmp_diff
+    CMPI A, #0
+    BEQ  _strcmp_eq
+    LDW  A, [$DBEA]
+    ADDI A, #1
+    STW  A, [$DBEA]
+    LDW  A, [$DBEC]
+    ADDI A, #1
+    STW  A, [$DBEC]
+    JMP  _strcmp_loop
+_strcmp_eq:
+    LDW  A, #0
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+_strcmp_diff:
+    SUB  A, B
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_memcpy:
+    SUBI SP, #2
+    STW  X, [SP]
+    MOV  X, SP
+    LDW  A, [X + #4]
+    STW  A, [$DBEE]
+    LDW  A, [X + #6]
+    STW  A, [$DBF0]
+    LDW  A, [X + #8]
+    STW  A, [$DBF2]
+_memcpy_loop:
+    LDW  A, [$DBF2]
+    CMPI A, #0
+    BEQ  _memcpy_done
+    SUBI A, #1
+    STW  A, [$DBF2]
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBF0]
+    LDB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    SUBI SP, #2
+    STW  X, [SP]
+    LDW  X, [$DBEE]
+    STB  A, [X]
+    LDW  X, [SP]
+    ADDI SP, #2
+    LDW  A, [$DBF0]
+    ADDI A, #1
+    STW  A, [$DBF0]
+    LDW  A, [$DBEE]
+    ADDI A, #1
+    STW  A, [$DBEE]
+    JMP  _memcpy_loop
+_memcpy_done:
+    LDW  A, [X + #4]
+    LDW  X, [X]
+    ADDI SP, #2
+    RET
+
+_C_DIV_A EQU $DBFA
+_C_DIV_B EQU $DBFC
+_C_DIV_Q EQU $DBFE
+_cc_div:
+    CMPI A, #0
+    BEQ  _ccdiv_zero
+    STW  A, [_C_DIV_A]
+    STW  B, [_C_DIV_B]
+    LDW  A, #0
+    STW  A, [_C_DIV_Q]
+_ccdiv_loop:
+    LDW  A, [_C_DIV_B]
+    LDW  B, [_C_DIV_A]
+    CMP  A, B
+    BLT  _ccdiv_done
+    SUB  A, B
+    STW  A, [_C_DIV_B]
+    LDW  A, [_C_DIV_Q]
+    ADDI A, #1
+    STW  A, [_C_DIV_Q]
+    JMP  _ccdiv_loop
+_ccdiv_done:
+    LDW  A, [_C_DIV_Q]
+    RET
+_ccdiv_zero:
+    LDW  A, #0
+    RET
+
+
+
+; ============================================================
+; Data section  org=$DA80
+; ============================================================
+    .org $DA80
+
+==== END ====

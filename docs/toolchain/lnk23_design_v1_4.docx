@@ -1,0 +1,276 @@
+**lnk23 リンカ設計書**
+
+YSD8800 ISA2.3 汎用リンカ
+
+Version 1.4  /  2026-06-21
+
+# **改版履歴**
+
+| **版数** | **日付** | **変更内容** |
+| --- | --- | --- |
+| v1.0 | 2026-04-20 | 初版作成 |
+| v1.1 | 2026-04-20 | 有識者レビュー①反映（R01〜R11） |
+| v1.2 | 2026-04-20 | 有識者レビュー②反映（R12〜R21）・最終版 |
+| v1.3 | 2026-04-23 | ★動作確認結果追記: SECTIONの後勝ちルール明記（§3.5新設）・YOF構造体アライメント問題注記（§2.3.1新設）・Force/kernel.asm動作確認結果追記（§10.3新設） |
+| **v1.4** | **2026-06-21** | **★道2（Step 8-F-2）対応: lnk23 v2.00→v2.01。①§2.2.1 新設＝YOF セクション flags の `has_org` ビット(bit4=0x10)を定義（hasm23 v1.04 が `.org` を持つセクションに立てる）。②§3.6 新設＝load_addr＋has_org 尊重の固定配置（has_org=1 なら $0000 でも固定・has_org=0 は従来自動配置）・`--machine force` での ROM 境界回避・固定/自動混在エラー。③§3.5 の SECTION 後勝ちルール（.bin 流し込み）は YOF 固定配置に置換されたため、YOF 経路では §3.6 が優先する旨を注記（v1.3 記述は保持）。結合テスト I1-I3 で道2版 yuios.bin が従来 .bin リンク版と全56416バイト完全一致を確認。設計: hasm23_xref_yof_design_v2_3.md §3.5.3。 |
+
+# **1. 概要**
+
+本ドキュメントはYSD8800 ISA2.3向け汎用リンカ lnk23 の設計仕様を記述する。lnk22 v1.00（セクション配置ツール）を全面再設計し、YOFオブジェクトファイル形式・シンボル解決・リロケーション・メモリマップ制約チェックを追加する。Cコンパイル時のPythonスクリプト依存を廃止し、将来の分割コンパイル・ライブラリアーカイブにも対応できる汎用リンカとする。本設計書は2回の有識者レビューを経た最終版（Go判断）に、動作確認結果・運用知見を追記したものである。
+
+# **2. YOF（YSD Object Format）オブジェクトファイル形式**
+
+## **2.1 ファイル構造**
+
+ヘッダ（16B）→ セクションテーブル（8B×n）→ シンボルテーブル（36B×n）→ リロケーションテーブル（6B×n）→ セクションデータ
+
+## **2.2 ヘッダ（16B固定）**
+
+| **フィールド** | **型** | **値/範囲** | **説明** |
+| --- | --- | --- | --- |
+| magic[4] | char[4] | YOF1 | マジックナンバー（ASCII） |
+| version | uint8 | 1 | フォーマットバージョン |
+| sec_count | uint8 | 1〜255 | セクション数 |
+| sym_count | uint16 | 0〜 | シンボル数 |
+| rel_count | uint16 | 0〜 | リロケーションエントリ数 |
+| reserved[6] | uint8[6] | 0x00 | 将来拡張用 |
+
+## **2.2.1 ★ セクション flags の has_org ビット（v1.4新設・道2）**
+
+YOF セクションテーブル（8B/エントリ）の flags バイトは従来 ALLOC/EXEC/WRITE/READ の
+下位4ビットを使用。道2 で **bit4 (0x10) を `has_org`** として新設する。
+
+| ビット | 名称 | 値 | 意味 |
+| --- | --- | --- | --- |
+| bit0 | SEC_ALLOC | 0x01 | メモリ確保 |
+| bit1 | SEC_EXEC | 0x02 | 実行可 |
+| bit2 | SEC_WRITE | 0x04 | 書込可 |
+| bit3 | SEC_READ | 0x08 | 読込可 |
+| **bit4** | **SEC_HAS_ORG** | **0x10** | **`.org` を持つ＝load_addr を固定配置として尊重（v1.4）** |
+
+hasm23 v1.04 は `.org` を1つでも持つセクションに has_org を立て、load_addr に sec_origin を
+出力する。lnk23 v2.01 は has_org=1 を見て（load_addr が $0000 でも）固定配置する。
+has_org=0 の従来 obj は load_addr=0 で自動配置され、完全後方互換を保つ。
+（§3.6 参照）
+
+## **2.3 シンボルエントリ（設計書36B）**
+
+各フィールドの定義は設計書通りだが、C構造体実装時にアライメントパディングが発生することに注意が必要。
+
+## **2.3.1 ★ YOF構造体アライメント問題（v1.3追記）**
+
+**【重要】C構造体のパディングにより実際のバイトサイズは設計書と異なる。lnk23実装では構造体キャストを使用せず、direct byte accessで読み込むこと。**
+
+| **構造体** | **設計書サイズ** | **実際のサイズ** | **備考** |
+| --- | --- | --- | --- |
+| yof_sym_t | 36 B | **38 B（+2B）** | アライメントパディングにより2B増加 |
+| yof_rel_t | 6 B | **8 B（+2B）** | アライメントパディングにより2B増加 |
+
+対処法: load_yof()はdirect byte accessで読み込む（構造体castは使用しない）。
+
+/* NG: yof_sym_t *sym = (yof_sym_t *)(buf + offset); */
+
+/* OK: バイト単位で手動読み込み */
+
+sym.kind    = buf[offset + 0];
+
+sym.sec_id  = buf[offset + 1];
+
+sym.addr    = (buf[offset+2]) | (buf[offset+3] << 8);
+
+memcpy(sym.name, buf + offset + 8, 28);
+
+# **3. セクション配置ポリシー**
+
+## **3.1 基本配置ルール**
+
+| **項目** | **定義** |
+| --- | --- |
+| TEXTセクション配置順 | 入力コマンドライン順に連結 |
+| DATAセクション配置 | TEXTの後ろに連結（--data指定時はその位置から） |
+| アライメント | 全セクション2バイト境界。sizeが奇数の場合は0x00を1バイトパディング |
+| 空セクション（size=0） | スキップ（R21）。配置アドレス計算から除外 |
+| オーバーラップ検出 | 複数セクションが同一アドレスを占有する場合はエラー |
+| I/O領域侵入チェック | 〜への配置は全モードでエラー |
+| 予約領域侵入チェック | 〜への配置はエラー |
+
+## **3.2 アライメント**
+
+YSD8800は16bit CPUであり、ワードアクセスは2byte境界を前提とする。各セクションの開始アドレスは必ず偶数。セクションサイズが奇数の場合は末尾に0x00を1バイトパディング。
+
+## **3.3 TEXT→DATA境界チェック（R12）**
+
+baremetalモードではTEXTはROM（/bin/sh000〜FFF）、DATAはRAM（000〜）に収まらなければならない。
+
+| **チェック** | **条件** |
+| --- | --- |
+| TEXT終端チェック（baremetal） | text_end > 0x3FFF → error |
+| DATAアドレスチェック（baremetal） | data_start < 0x4000 → error |
+| WRITABLEセクションのROM配置禁止 | flags & SEC_WRITE && load_addr < 0x4000 → error |
+| 予約領域交差判定（R20） | sec_end >= 0xFBD0 && sec_start <= 0xFC7F → error |
+| I/O領域交差判定 | sec_end >= 0xFC80 → error |
+
+## **3.4 空セクションのスキップ（R21）**
+
+if (sec.size == 0) { skip; continue; }
+
+## **3.5 ★ スクリプトモードのSECTION後勝ちルール（v1.3追記）**
+
+**【重要】スクリプトモードにおいて同一アドレスに複数のSECTIONが配置された場合、後に記述したSECTIONが前の内容を上書きする（後勝ちルール）。**
+
+この仕様はベクタテーブルを持つハーネスとコードを結合する際に重要となる。必ず「コードを先・ハーネスを後」の順で記述すること。
+
+| **✅ 正しい記述（ハーネス後）** | **❌ 誤った記述（ハーネス先）** |
+| --- | --- |
+| SECTION code    0x0000 prog.bin prog.sym SECTION harness 0x0000 harness.bin harness.sym → ハーネスのベクタテーブルが正しく配置される | SECTION harness 0x0000 harness.bin harness.sym SECTION code    0x0000 prog.bin prog.sym → ベクタテーブルがコードの0x00バイトで破壊される |
+
+【根拠】本ルールはLHANDOVER_CHAT15.mdのデバッグ教訓として確立された。逆順にした場合、/bin/sh000から始まるコードの先頭バイト（0x00）がハーネスのベクタテーブル全エントリを0x0000に破壊し、リセット後にアドレス0x0000へ無限ジャンプする。
+
+## **3.6 ★ 道2：YOF load_addr＋has_org 尊重の固定配置（v1.4新設・lnk23 v2.01）**
+
+**【位置づけ】** §3.5 の後勝ちルールは `.bin` を mem[] へ直接流し込むスクリプトモードの仕様。
+道2（Step 8-F-2）では YUI OS を **YOF オブジェクト（forth.obj／kernel.obj）のクロスファイル
+参照リンク**で構築する。YOF 経路では本 §3.6 の固定配置が適用され、後勝ちルールに依存しない
+（v1.3 §3.5 の記述は `.bin` 経路向けとして保持）。
+
+### 3.6.1 背景（旧前提の崩壊）
+
+YUI OS は **forth=$5100／kernel=$0000 の2固定アドレス配置**。YOF 引数モードの既定動作は
+両セクションを $0000 から自動連続配置するため、forth が kernel の後ろに積まれ ROM 境界 $3FFF
+を超過してリンク失敗した。固定アドレス配置の指定手段が YOF モードに無かったことが原因。
+
+### 3.6.2 仕様（v2.01）
+
+- **load_yof でセクションの load_addr フィールドと has_org フラグ（§2.2.1）を読む。**
+  従来 v2.00 は load_addr を 0 で捨てていた（lnk23.c:351）。これを止めて保持する。
+- **has_org=1 のセクションは、値が $0000 でも load_addr へ固定配置**。has_org=0 は従来通り
+  place_sections で自動配置（後方互換）。
+  ※「load_addr≠0 なら固定」という暫定判定は**採用しない**。kernel@$0000 は
+    has_org=1／load_addr=$0000 のため、その判定だと自動配置に誤って流れる。
+- **固定（has_org=1）と自動（has_org=0）の混在はエラー**。当面 YUI OS は全 YOF セクションが
+  has_org を持つ前提。
+- 配置後、既存の resolve_symbols → apply_relocations で UNDEF（kernel→forth の WORD_OS_START）
+  を解決（この経路は v2.00 既存・無改修で機能）。
+
+### 3.6.3 ★最重要：`--machine force` 必須
+
+道2 リンクでは **`--machine force` を必ず指定する**（§4.2 参照）。forth は load_addr=$5100 に
+固定配置されるが、既定（baremetal）モードは ROM 境界 $3FFF 超のセクションをエラーにするため、
+これを付けないと forth@$5100 が弾かれる。forth は RAM 上の正当配置であり、force モードは
+ROM 境界チェックを正しく回避する手段である。
+
+### 3.6.4 検証（結合テスト I1-I3）
+
+道2版ビルドで forth@$5100・kernel@$0000 固定配置、WORD_OS_START を reloc=2 で解決、
+YUI OS 起動出力が従来 .bin リンク版と一致、**yuios.bin が従来版と全56416バイト完全一致**。
+（設計・手順詳細: hasm23_xref_yof_design_v2_3.md §3.5.3・yuios_build_procedure v1.6 §4.11）
+
+# **4. メモリマップ制約（R02・R04・R17・R20対応）**
+
+## **4.1 ISA2.3メモリマップ**
+
+| **領域** | **アドレス** | **lnk23の扱い** |
+| --- | --- | --- |
+| ROM（baremetal） | /bin/sh000〜FFF | TEXTのみ配置許可。WRITEビット付き禁止 |
+| RAM | 000〜 | TEXT/DATA/BSS配置許可 |
+| ランタイムワーク | 〜 | 配置禁止（予約領域） |
+| I/Oポート | 〜 | 全モードで配置禁止 |
+
+## **4.2 --machineモード（R17）**
+
+| **モード** | **オプション** | **チェック内容** |
+| --- | --- | --- |
+| baremetal | --machine baremetal | ROM(/bin/sh000〜FFF): TEXTのみ / WRITABLE禁止 / 予約領域・I/O禁止 |
+| force | --machine force | RAM全域(/bin/sh000〜)にTEXT/DATA配置許可。WRITABLEのROM配置は禁止。I/O禁止 |
+| none | --machine none | チェック無効（デバッグ用・使用推奨しない） |
+
+# **10. ビルドフロー**
+
+## **10.1 標準フロー（Cプログラム・スクリプトモード）**
+
+# Step1: コンパイル
+
+./scc23 -o prog.asm prog.c
+
+# Step2: アセンブル
+
+./hasm23 prog.asm        → prog.asm.bin  prog.asm.sym
+
+./hasm23 harness.asm     → harness.asm.bin  harness.asm.sym
+
+# Step3: リンクスクリプト（順序注意: code→harness）
+
+OUTPUT prog.bin
+
+SYMOUT prog.sym
+
+SECTION code    0x0000 prog.asm.bin prog.asm.sym
+
+SECTION harness 0x0000 harness.asm.bin harness.asm.sym
+
+# Step4: リンク
+
+./lnk23 prog.lds
+
+# Step5: 実行
+
+./emu23 prog.bin -q
+
+## **10.2 YOFフロー（lnk23 YOFモード）**
+
+./hasm23 -c harness.asm  → harness.asm.obj
+
+./hasm23 -c prog.asm     → prog.asm.obj
+
+./lnk23 -o prog.bin harness.asm.obj prog.asm.obj
+
+## **10.3 ★ Forceカーネル（kernel.asm）動作確認結果（v1.3追記）**
+
+lnk23 v2.00がForceカーネル（kernel.asm v0.7）のリンクに対応していることを確認した。
+
+# ビルドフロー（kernel.lds）
+
+OUTPUT kernel_final.bin
+
+SYMOUT kernel_final.sym
+
+SECTION code 0x0000 kernel.asm.bin kernel.asm.sym
+
+./hasm23 kernel.asm
+
+./lnk23 kernel.lds
+
+./emu23 kernel_final.bin -q
+
+| **確認項目** | **結果** | **備考** |
+| --- | --- | --- |
+| hasm23 v1.01 アセンブル | ✅ PASS | エラーなし / 3806 bytes |
+| lnk23 v2.00 スクリプトモードリンク | ✅ PASS | 3806 bytes / 76 symbols |
+| バイナリ一致確認 | ✅ PASS | 直接出力とlnk23経由出力が完全一致 |
+| emu23 v1.01 実行 | ✅ PASS | T0/T1タスクスイッチ正常動作確認 |
+
+# **11. 既知の問題・注意事項**
+
+## **11.1 hasm23 EQU定数の四則演算式非対応**
+
+hasm23はEQU定数の四則演算式（例: TCB_POOL+64, CALLSTK_BASE-4）に非対応。演算結果を数値リテラルとして直接記述すること。
+
+/* NG */ LDW  A, #CALLSTK_BASE-4
+
+/* OK */ LDW  A, #        ; CALLSTK_BASE-4の計算結果
+
+## **11.2 YOF構造体アライメント（再掲）**
+
+§2.3.1参照。load_yof()はdirect byte accessで実装済み。将来の再実装時も構造体castを使用しないこと。
+
+## **11.3 スクリプトモードSECTION順序（再掲）**
+
+§3.5参照。コードを先・ハーネスを後の順序を必ず守ること。
+
+# **12. バージョン体系**
+
+| **バージョン** | **対応Phase** | **主な機能** |
+| --- | --- | --- |
+| v2.0 | Phase 1 | YOF・シンボル解決・R_ABS16・メモリ制約・.bin後方互換・Python廃止 |
+| v2.1 | Phase 2 | BSSセクション・scc23 -c対応・weakシンボル |
+| v3.0 | Phase 3 | アーカイブ（.lib）対応 |
