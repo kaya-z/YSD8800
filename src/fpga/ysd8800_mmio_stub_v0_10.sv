@@ -1,6 +1,15 @@
 // ============================================================
-//  ysd8800_mmio_stub_v0_9.sv   v0.9  (2026-08-30 ②-B 段1 CCR追加)
+//  ysd8800_mmio_stub_v0_10.sv  v0.10 (2026-09-21 ②.5 ★TKT-V12★)
 //  ★正式版★
+//    ★v0.10 変更点（設計書 v24_tktv12_uart_phy_design_v0_3_1.md §8.2）★:
+//      (1) YSD8001 参照を v0_1 → ★v0_2★ へ追従
+//      (2) parameter bit PHY_EN / BAUD_EN を新設し YSD8001 へ透過（既定 0/0＝C-0）
+//      (3) 物理層ポート uart_txd_o / uart_rxd_i / uart_rx_frame_err_o を追加
+//          疑似ポート4本は現行どおり残す（C-2 ではデバッグ観測専用）
+//      ★それ以外は v0.9 と同一。ccr_cen_r のリセット行は無変更＝
+//        _cen1_poc の sed パターンはそのまま使える（B-13）★
+//  ----（以下 v0.9 までの記述・無変更）----
+//  ysd8800_mmio_stub_v0_9.sv   v0.9  (2026-08-30 ②-B 段1 CCR追加)
 //    v0.9 変更点(工程②-B 段1・設計書 v11_cache_core_design_v0_4 §5):
 //      (1) ★CCR(キャッシュ制御レジスタ)を追加★
 //            $FF12 = 下位バイト  bit0 CEN  (R/W・リセット値0=disable)
@@ -170,7 +179,11 @@
 // ============================================================
 `timescale 1ns/1ps
 
-module ysd8800_mmio_stub_v0_9 (
+module ysd8800_mmio_stub_v0_10 #(
+    // ★v0.10: TKT-V12 構成（YSD8001 へ透過。既定 C-0）★
+    parameter bit PHY_EN  = 1'b0,
+    parameter bit BAUD_EN = 1'b0
+) (
     input  logic        clk,
     input  logic        rst_n,
 
@@ -212,6 +225,10 @@ module ysd8800_mmio_stub_v0_9 (
     input  logic [7:0]  uart_rx_data_i,
     output logic        uart_tx_valid_o,   // 1クロックパルス(送信開始)
     output logic [7:0]  uart_tx_data_o,
+    // ★v0.10: 実シリアル物理層（TKT-V12）。C-0 では txd=1 固定・rxd 未参照★
+    output logic        uart_txd_o,
+    input  logic        uart_rxd_i,
+    output logic        uart_rx_frame_err_o,   // 1クロックパルス・デバッグ専用
 
     // ---- ★V5新規: YSD8002 タイマー★ ----
     //   ★YSD8004 は経由しない★
@@ -467,7 +484,8 @@ module ysd8800_mmio_stub_v0_9 (
     logic irq_uart_rx;   // ★1クロックパルス★
     logic irq_uart_tx;   // ★レベル★（TDRE・論点B=案B-1承認済）
 
-    ysd8800_ysd8001_v0_1 u_ysd8001 (
+    // ★v0.10: v0_1 → v0_2（TKT-V12）。parameter を透過★
+    ysd8800_ysd8001_v0_2 #(.PHY_EN(PHY_EN), .BAUD_EN(BAUD_EN)) u_ysd8001 (
         .clk        (clk),
         .rst_n      (rst_n),
         // MMIOルーティング: 本デバイスがヒットした時のみ sel を上げる
@@ -483,7 +501,11 @@ module ysd8800_mmio_stub_v0_9 (
         .rx_valid_i (uart_rx_valid_i),
         .rx_data_i  (uart_rx_data_i),
         .tx_valid_o (uart_tx_valid_o),
-        .tx_data_o  (uart_tx_data_o)
+        .tx_data_o  (uart_tx_data_o),
+        // ★v0.10: 実シリアル物理層（TKT-V12・ポート既定値に依存しない）★
+        .txd_o          (uart_txd_o),
+        .rxd_i          (uart_rxd_i),
+        .rx_frame_err_o (uart_rx_frame_err_o)
     );
 
     // ------------------------------------------------------------

@@ -1,6 +1,38 @@
 // ============================================================
-//  ysd8800_mmio_stub_v0_9.sv   v0.9  (2026-08-30 ②-B 段1 CCR追加)
+//  ysd8800_mmio_stub_v0_14.sv  v0.14 (2026-10-01 ②.5 ★TKT-V16(e) F-2/U-15★)
+//    ★v0.14 変更点★: 参照追従のみ（ロジック無変更）。module 名も v0_13 → ★v0_14★ へ昇格。
+//      (1) YSD8003 参照を ysd8800_ysd8003_v0_6 → ★v0_7★（S_ERROR で保留EXECを破棄）
+//      ※ 上位 ysd8800_v5_membus は module 名据置・ファイル名 v0_20 で本 v0_14 を参照。
+//  ----（以下 v0.13 の記述・無変更）----
+//  ysd8800_mmio_stub_v0_13.sv  v0.13 (2026-09-30 ②.5 ★TKT-V16(e)★)
+//    ★v0.13 変更点★: 参照追従のみ（ロジック無変更）。module 名も v0_12 → ★v0_13★ へ昇格。
+//      (1) YSD8003 参照を ysd8800_ysd8003_v0_5 → ★v0_6★（(e) タイムアウト再設計版）
+//      ※ 上位 ysd8800_v5_membus は module 名据置・ファイル名 v0_19 で本 v0_13 を参照。
+//  ----（以下 v0.12 の記述・無変更）----
+//  ysd8800_mmio_stub_v0_12.sv  v0.12 (2026-09-30 ②.5 ★TKT-V16(d)・案1★)
+//    ★v0.12 変更点★: 参照追従のみ（ロジック無変更）。module 名も v0_11 → ★v0_12★ へ昇格。
+//      (1) YSD8001 参照を ysd8800_ysd8001_v0_3 → ★v0_4★
+//      (2) YSD8002 参照を ysd8800_ysd8002_v0_3 → ★v0_4★
+//      (3) YSD8003 参照を ysd8800_ysd8003_v0_1（据置名）→ ★v0_5★
+//      ※ CPU_HZ は各デバイスの既定値（4_000_000）で運用し、本モジュールからは伝搬しない
+//        （設計書 v26_tktv16_clock_plan_design_v0_3.md §5・R-4: トップ階層(b)完成後に切替）
+//      ※ 上位 ysd8800_v5_membus は module 名据置・ファイル名 v0_18 で本 v0_12 を参照。
+//  ----（以下 v0.11 の記述・無変更）----
+//  ysd8800_mmio_stub_v0_11.sv  v0.11 (2026-09-21 ②.5 ★TKT-V12・review v1.3★)
 //  ★正式版★
+//    ★v0.11 変更点★: YSD8001 参照を v0_2 → ★v0_3★ へ追従（B-17 txd_o FF化・R-10）のみ。
+//      それ以外は v0.10 と同一（_cen1_poc の sed パターンはそのまま使える）
+//  ----（以下 v0.10 までの記述・無変更）----
+//  ysd8800_mmio_stub_v0_10.sv  v0.10 (2026-09-21 ②.5 ★TKT-V12★)
+//    ★v0.10 変更点（設計書 v24_tktv12_uart_phy_design_v0_3_1.md §8.2）★:
+//      (1) YSD8001 参照を v0_1 → ★v0_2★ へ追従
+//      (2) parameter bit PHY_EN / BAUD_EN を新設し YSD8001 へ透過（既定 0/0＝C-0）
+//      (3) 物理層ポート uart_txd_o / uart_rxd_i / uart_rx_frame_err_o を追加
+//          疑似ポート4本は現行どおり残す（C-2 ではデバッグ観測専用）
+//      ★それ以外は v0.9 と同一。ccr_cen_r のリセット行は無変更＝
+//        _cen1_poc の sed パターンはそのまま使える（B-13）★
+//  ----（以下 v0.9 までの記述・無変更）----
+//  ysd8800_mmio_stub_v0_9.sv   v0.9  (2026-08-30 ②-B 段1 CCR追加)
 //    v0.9 変更点(工程②-B 段1・設計書 v11_cache_core_design_v0_4 §5):
 //      (1) ★CCR(キャッシュ制御レジスタ)を追加★
 //            $FF12 = 下位バイト  bit0 CEN  (R/W・リセット値0=disable)
@@ -170,7 +202,11 @@
 // ============================================================
 `timescale 1ns/1ps
 
-module ysd8800_mmio_stub_v0_9 (
+module ysd8800_mmio_stub_v0_14 #(
+    // ★v0.10: TKT-V12 構成（YSD8001 へ透過。既定 C-0）★
+    parameter bit PHY_EN  = 1'b0,
+    parameter bit BAUD_EN = 1'b0
+) (
     input  logic        clk,
     input  logic        rst_n,
 
@@ -212,6 +248,10 @@ module ysd8800_mmio_stub_v0_9 (
     input  logic [7:0]  uart_rx_data_i,
     output logic        uart_tx_valid_o,   // 1クロックパルス(送信開始)
     output logic [7:0]  uart_tx_data_o,
+    // ★v0.10: 実シリアル物理層（TKT-V12）。C-0 では txd=1 固定・rxd 未参照★
+    output logic        uart_txd_o,
+    input  logic        uart_rxd_i,
+    output logic        uart_rx_frame_err_o,   // 1クロックパルス・デバッグ専用
 
     // ---- ★V5新規: YSD8002 タイマー★ ----
     //   ★YSD8004 は経由しない★
@@ -467,7 +507,8 @@ module ysd8800_mmio_stub_v0_9 (
     logic irq_uart_rx;   // ★1クロックパルス★
     logic irq_uart_tx;   // ★レベル★（TDRE・論点B=案B-1承認済）
 
-    ysd8800_ysd8001_v0_1 u_ysd8001 (
+    // ★v0.10: v0_1 → v0_2（TKT-V12）。parameter を透過★
+    ysd8800_ysd8001_v0_4 #(.PHY_EN(PHY_EN), .BAUD_EN(BAUD_EN)) u_ysd8001 (   // [v0.12] v0_3→v0_4 参照追従
         .clk        (clk),
         .rst_n      (rst_n),
         // MMIOルーティング: 本デバイスがヒットした時のみ sel を上げる
@@ -483,7 +524,11 @@ module ysd8800_mmio_stub_v0_9 (
         .rx_valid_i (uart_rx_valid_i),
         .rx_data_i  (uart_rx_data_i),
         .tx_valid_o (uart_tx_valid_o),
-        .tx_data_o  (uart_tx_data_o)
+        .tx_data_o  (uart_tx_data_o),
+        // ★v0.10: 実シリアル物理層（TKT-V12・ポート既定値に依存しない）★
+        .txd_o          (uart_txd_o),
+        .rxd_i          (uart_rxd_i),
+        .rx_frame_err_o (uart_rx_frame_err_o)
     );
 
     // ------------------------------------------------------------
@@ -496,7 +541,7 @@ module ysd8800_mmio_stub_v0_9 (
     // ------------------------------------------------------------
     logic [7:0] ys2_rdata;
 
-    ysd8800_ysd8002_v0_3 u_ysd8002 (    // [v0.6] EN是正: v0_2→v0_3 参照追従
+    ysd8800_ysd8002_v0_4 u_ysd8002 (    // [v0.12] v0_3→v0_4 参照追従（[v0.6] EN是正: v0_2→v0_3）
         .clk         (clk),
         .rst_n       (rst_n),
         // MMIOルーティング: 本デバイスがヒットした時のみ sel を上げる
@@ -523,7 +568,7 @@ module ysd8800_mmio_stub_v0_9 (
     logic       ys3_ready;
     logic       irq_stor_int;   // YSD8003 → YSD8004 内部直結線
 
-    ysd8800_ysd8003_v0_1 u_ysd8003 (
+    ysd8800_ysd8003_v0_7 u_ysd8003 (   // [v0.14] v0_6→v0_7 参照追従（[v0.13] v0_5→v0_6／[v0.12] 据置名v0_1→v0_5）
         .clk          (clk),
         .rst_n        (rst_n),
         // MMIOルーティング: 本デバイスがヒットした時のみ sel を上げる

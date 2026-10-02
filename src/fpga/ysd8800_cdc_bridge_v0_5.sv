@@ -1,4 +1,15 @@
 // ============================================================
+//  ysd8800_cdc_bridge_v0_5.sv   v0.5  (2026-09-04 工程②-B ★段6 / TKT-V6★)
+//  ★境界② 契約 C-α' の多重報告を一度きり化★
+//    ★v0.5 変更点(TKT-V6)★:
+//      (1) cb_viol / cb_reported を追加し★1事象につき1回だけ★報告。
+//      (2) ★違反条件・メッセージ書式は不変★。変えたのは報告の粒度のみ。
+//      (3) 相互注記に「両境界は同一の再アーム方式を採る」を追記。
+//      (4) それ以外の論理は v0.4 から一切変更していない。
+//      (5) 版数を上げた理由: ★ファイルが変わったから★（KY84）。
+//    設計根拠: v14_tkt_v6_fix_design_v0_2.md §3.3 / §3.5A
+//    ------------------------------------------------------------
+//    以下 v0.4 までの記録(欠落させない)
 //  ysd8800_cdc_bridge_v0_4.sv   v0.4  (2026-08-26 死状態変数 ack_sync_d 除去)
 //  ★正式版★ 工程①.5
 //    v0.4 変更点:
@@ -81,7 +92,7 @@
 // ============================================================
 `timescale 1ns/1ps
 
-module ysd8800_cdc_bridge_v0_4 #(
+module ysd8800_cdc_bridge_v0_5 #(
     parameter int PHYS_AW = 20        // ★V3.5追加: 物理アドレス幅(20bit=1MB)★
 ) (
     // ---- CPU側(4MHzドメイン): 抽象バスI/F ----
@@ -168,6 +179,9 @@ module ysd8800_cdc_bridge_v0_4 #(
     //          （S_MEMR_LO→S_MEMR_HI 等）。継続自体は違反ではない。★
     //
     //  ★対の検査器がキャッシュ段側（境界①）にもある。片方だけ直さないこと。★
+    //  ★TKT-V6 以降、両者は同一の再アーム方式（違反条件が偽になったとき）を
+    //    採る。★ 方式が片側だけ変わると★回数の帰属が非対称になり、
+    //    段6 の回数判定が狂う。★（2026-09-04）
     //
     //  ★N-3: 本検査器は fill_active_r の deassert タイミング検証器を兼ねる。★
     //    フィル完了時に fill_active_r の解除が1サイクル遅れると、
@@ -184,19 +198,45 @@ module ysd8800_cdc_bridge_v0_4 #(
 `ifndef SYNTHESIS
     logic                cb_ready_d, cb_rd_d, cb_wr_d;
     logic [PHYS_AW-1:0]  cb_addr_d;
+    logic                cb_viol;
+    logic                cb_reported;
+    // ★方式A試打ち: 報告済の要求を記憶し、同一要求の再送を抑止する★
+    logic                cb_rep_rd, cb_rep_wr;
+    logic [PHYS_AW-1:0]  cb_rep_addr;
+    logic                cb_same_as_reported;
+
+    assign cb_viol = cb_ready_d && (cpu_mem_rd || cpu_mem_wr)
+                                && (cpu_mem_rd == cb_rd_d)
+                                && (cpu_mem_wr == cb_wr_d)
+                                && (cpu_phys_addr == cb_addr_d);
+
+    assign cb_same_as_reported = cb_reported
+                              && (cpu_mem_rd   == cb_rep_rd)
+                              && (cpu_mem_wr   == cb_rep_wr)
+                              && (cpu_phys_addr == cb_rep_addr);
 
     always @(posedge cpu_clk or negedge cpu_rst_n) begin
         if (!cpu_rst_n) begin
-            cb_ready_d <= 1'b0;
-            cb_rd_d    <= 1'b0;
-            cb_wr_d    <= 1'b0;
-            cb_addr_d  <= '0;
+            cb_ready_d  <= 1'b0;
+            cb_rd_d     <= 1'b0;
+            cb_wr_d     <= 1'b0;
+            cb_addr_d   <= '0;
+            cb_reported <= 1'b0;
+            cb_rep_rd   <= 1'b0;
+            cb_rep_wr   <= 1'b0;
+            cb_rep_addr <= '0;
         end else begin
-            if (cb_ready_d && (cpu_mem_rd || cpu_mem_wr)
-                           && (cpu_mem_rd == cb_rd_d) && (cpu_mem_wr == cb_wr_d)
-                           && (cpu_phys_addr == cb_addr_d))
+            if (cb_viol && !cb_same_as_reported) begin
                 $error("[CONTRACT C-a'/b2] same req held after ready: addr=%h rd=%b wr=%b t=%0t",
                        cpu_phys_addr, cpu_mem_rd, cpu_mem_wr, $time);
+                cb_reported <= 1'b1;
+                cb_rep_rd   <= cpu_mem_rd;
+                cb_rep_wr   <= cpu_mem_wr;
+                cb_rep_addr <= cpu_phys_addr;
+            end
+            else if (!cpu_mem_rd && !cpu_mem_wr) begin
+                cb_reported <= 1'b0;    // ★バスアイドルで再アーム★
+            end
 
             cb_ready_d <= cpu_mem_ready;
             cb_rd_d    <= cpu_mem_rd;

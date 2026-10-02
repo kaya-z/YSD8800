@@ -1,0 +1,236 @@
+# Makefile v1.4 — YUI OS / Dhrystone ビルドシステム
+#   Step 8-B（ビルドシステム改善）／yuios_makefile_design v0.2 準拠
+#   設計目標: build_road2.sh / 既知 Dhrystone 手順と「ビルド内容がバイト等価」。
+#            記述形式を shell→Makefile に変えるだけで、ツール入力バイト列・順序・
+#            オプションは一切変えない（56416 一致・819 一致を構造的に維持）。
+#   絶対ゲート: yuios=56416バイト完全一致（v1.3 実測確定・2026-08-12）
+#              ＋ TCR-ACK バイトパターン(21102300230190fc)=1箇所存在
+#              / dhrystone -O0-strict = ★818/48875/P:20★  (v1.4・scc23 v2.08)
+#                （旧 819/48785 は scc23 v2.07 以前の値。v1.1〜v1.3 履歴に保持）
+#              / dhrystone -O1        = ★827/48325★       (v1.4 新規)
+#   ★-O1 ゲートの正本は本 Makefile とする（HANDOFF v1.1 D9）。手順書・台帳は
+#     本ファイルを参照のこと。ゲート値と判定コードを同じ場所に置き乖離を防ぐ。
+#
+#   改版履歴:
+#     v1.0 (2026-XX-XX) 初版。Step 8-B ビルドシステム改善で作成。
+#                       絶対ゲート dhrystone=826/48405/P:20 (scc23 v2.03)。
+#     v1.1 (2026-07-26) 【scc23 v2.04 対応・char ロード幅是正】絶対ゲートを
+#                       826/48405/P:20 → 819/48785/P:20 に更新
+#                       (cycles +380=+0.79% 増は char 読出が各+2命令になった
+#                        論理的結果・機能的正当性 P:20 は完全維持)。
+#                       V3 RTL 4初期化パターン ($00/$FF/$AA/$55) 全PASSで
+#                       初期値非依存を実証済 (CHAT121)。yuios=56416 は不変。
+#                       設計書 scc23_v2_04_char_load_fix_design_v1_0.md 準拠。
+#     v1.2 (2026-07-29) 【V8-b Pre / kernel v12.7 → v12.8 移行】
+#                       KERN_SRC を kernel_v12_7.asm → kernel_v12_8.asm に切替。
+#                       kernel v12.8 は V5 TCR-ACK 方式（RTL 側 2026-07-13 凍結
+#                       と整合）に対応。v12.7 は IRQ0_HANDLER に TCR bit5 書込
+#                       が無く RTL 上でタイマー永久停止するため V8-b（yuios.bin
+#                       RTL 実行）には v12.8 化が不可欠。
+#                       yuios 絶対ゲートは【56416 バイトのまま不変】（Pre-3 実測）。
+#                       設計書 v1.1 は+8B予想としたが、これは.orgパディング吸収
+#                       を見落とした構造的誤り。実装は+8B確かに追加(offset $003D
+#                       に `21 10 23 00 23 01 90 fc` の8Bパターン挿入)されている
+#                       が、次の.orgまでのゼロパディングが-8Bされ.binサイズ不変。
+#                       → 新 AC-1: yuios_road2.bin 内に TCR-ACK 8Bバイトパターン
+#                         `21102300230190fc` が【1箇所】存在すること。
+#                         v12.7版=0箇所/v12.8版=1箇所で弁別性確認済（Pre-3）。
+#                       REF_BIN は Pre-5 で新リファレンス yuios_ref_road2_I4.bin
+#                       を凍結してから確定（実サイズ 56416B ながら内容差分あり）。
+#                       本 v1.2 では旧値のまま残置（verify は意図的に失敗し
+#                       Pre-5 未完了を弁別）。
+#                       Dhrystone 絶対ゲート 819/48785/P:20 は不変（kernel 差異は
+#                       Dhrystone 実行経路に無関係）。
+#                       設計書 kernel_v12_8_migration_design_v1_2.md 準拠。
+#                       [Pre-5 完了 2026-07-29] 新リファレンス yuios_ref_road2_I4.bin
+#                       凍結完了。旧 I3 を yuios_ref_road2_I3_archived.bin に退避。
+#                       凍結票: yuios_ref_freeze_ticket_I4_v1_0.md。
+#                       [Pre-6 完了 2026-07-29] REF_BIN を I4 に切替・verify メッセージ
+#                       改善。AC-4a: クリーンビルド yuios_road2.bin と I4 が MD5 完全一致
+#                       (7a6a5b87afb1ef9f413a7d0c1360e706) で verify PASS。
+#                       AC-4b: make regress で Dhrystones/sec=819/cycles=48785/P:20 の
+#                       Dhrystone 絶対ゲート維持を実測確認・PASS。
+#     v1.3 (2026-08-12) 【D-3 対応・KERN_SRC 追従漏れ是正】
+#                       KERN_SRC を kernel_v12_8.asm → kernel_v12_11.asm に切替。
+#                       v12.11 は TKT-01/02/03/04（UART受信リングバッファ修正・
+#                       コンテキストスイッチA/Bレジスタ復元欠落修正等）を反映した
+#                       Phase A 確定版（kernel_v12_11.asm ヘッダ記載 md5 と整合）。
+#                       v12.8→v12.11 間の中間版（v12.9/v12.10 相当の修正）も
+#                       すべて本切替に含まれて反映される。
+#                       クリーンビルドで yuios_road2.bin = 56,416 バイト・
+#                       md5=599a7f9d1ebf103f81f58450ea1b6491 を実測確認。これは
+#                       kernel_v12_11.asm ヘッダ内記載のゴールデン値と完全一致
+#                       （yuios_paired_impl_ledger_v1_0.md 記載の確定値とも一致）。
+#                       REF_BIN を I4 → I5 に切替（新ゴールデン品 yuios_ref_road2_I5.bin
+#                       として凍結）。旧 I4 は yuios_ref_road2_I4_archived.bin に
+#                       退避（前版情報欠落防止）。凍結票: yuios_ref_freeze_ticket_I5_v1_0.md。
+#                       make regress で Dhrystones/sec=819/cycles=48785/P:20 の
+#                       絶対ゲート維持を実測確認・PASS（kernel差異はDhrystone実行
+#                       経路に無関係のため不変、が念のため実測で再確認）。
+#                       本修正は HANDOVER_CHAT134.md 記載の D-3（Makefile追従漏れ・
+#                       重要度「中」）に対応。B-5（文書整理）を待たず先行対処。
+#                       設計書: なし（軽微修正・かやぬまさん承認のうえ即時実施。
+#                       原則43の趣旨に照らし、既存ゴールデン値への追従のみで新規
+#                       設計判断を伴わないため設計書レビュー工程は省略）。
+
+#     v1.4 (2026-09-17) 【scc23 v2.08 / lnk23 v2.02 への追従・絶対ゲート更新】
+#                       設計書 yuios_cproc_area_review_design_v0_5.md §8.2 /
+#                       HANDOFF_YSD8800_cproc_runtime_v1_1.md 準拠。
+#                       (a) 絶対ゲートを 819/48785 → ★818/48875★ に更新。
+#                           scc23 v2.08 (TKT-A1/A2/A5-b)。2026-09-17 本体実測。
+#                           dhry_final.bin 21,846B md5=e185df32a1bf67da602c1924f5ec8cc3。
+#                       (b) ★-O1 トラック 827/48325 を新規にゲート化★。
+#                           dhry_o1.bin 21,846B md5=0b1a252301d9b22fa127d2da394d439e。
+#                           -O0 と -O1 は同サイズのため md5 でしか区別できない。
+#                       (c) ★D7 の lnk23 に --allow-overlap を追加（暫定措置）★。
+#                           lnk23 v2.02 はスクリプトモードのセクション重なりを既定で
+#                           エラーにする。現行 dhry.lds は harness 110B ($0000-$006D) が
+#                           dhry.asm.bin 先頭のゼロ詰めを後勝ちで上書きする構造のため、
+#                           無指定では停止する。出力は v2.01 とビット一致を実測確認済み。
+#                           ★本筋は Dhrystone の道2(.obj固定配置)移行(T4・scc23改良側)★
+#                           ★であり、移行後は --allow-overlap 不要。それまでの繋ぎ。★
+#                       (d) regress を -O0/-O1 の2トラック判定に拡張（dhrystone_o1 新設）。
+#                       yuios 側 (S1-S7) は無改修。56416/md5=599a7f9d... は不変。
+#
+
+# ===== M-A 必須プリアンブル（設計書 §2.2）=====
+SHELL       := /bin/bash
+.SHELLFLAGS := -ec        # -e: 途中失敗で即停止 / -c: コマンド実行
+.ONESHELL:                # レシピ全体を単一シェルで実行（シェル変数を行またぎ保持）
+
+# ===== ツール（既ビルド済み前提・カレント配置・§2.3）=====
+FORCE   := ./force
+HASM    := ./hasm23
+LNK     := ./lnk23
+SCC     := ./scc23
+EMU     := ./emu23
+MKFS    := python3 mkfs_yuifs.py
+
+# ===== 入力ソース（本番・非改変）=====
+FORTH_SRC := kernel_forth_v0_10_18.fs
+KERN_SRC  := kernel_v12_11.asm    # v1.3: v12.8→v12.11 (TKT-01〜04 反映・Phase A 確定版)
+TGT       := ysd8800_kern.tgt
+PRIM      := ysd8800.prim
+DHRY_SRC  := dhry_timer.c
+HARNESS   := startup_harness23_v17.asm
+
+# ===== 中間（実験ファイル名・KY28/38 本番非改変）=====
+FORTH_ASM := kf_r2.asm
+KERN_ASM  := kf_r2_kern.asm
+FORTH_OBJ := kf_r2.asm.obj
+KERN_OBJ  := kf_r2_kern.asm.obj
+
+# ===== 成果物（build_road2.sh と同名）=====
+YUIOS_BIN := yuios_road2.bin
+YUIOS_SYM := yuios_road2.sym
+DHRY_BIN  := dhry_final.bin
+DHRY_O1_BIN := dhry_o1.bin        # v1.4 新設（-O1 トラック）
+DISK      := disk.img
+DISK_KB   := 32
+DISK_FILE := hello.txt
+
+# ===== 検証（E-A: 凍結退避品・自己比較回避）=====
+# v1.2 Pre-5完了(2026-07-29): 新リファレンス yuios_ref_road2_I4.bin を凍結。
+#                             旧リファレンスは yuios_ref_road2_I3_archived.bin に
+#                             リネーム退避済（前版情報欠落防止）。
+#                             凍結票: yuios_ref_freeze_ticket_I4_v1_0.md 参照。
+#                             MD5(I4)= 7a6a5b87afb1ef9f413a7d0c1360e706 (56416B)
+#                             MD5(I3_archived)= a1f1001fe96d9c2e7b4db8e47d4046e4 (56416B)
+#                             サイズ同一・内容271バイト差のためハッシュ照合必須。
+# v1.3 D-3対応(2026-08-12):  新リファレンス yuios_ref_road2_I5.bin を凍結
+#                             （KERN_SRC=kernel_v12_11.asm 反映品）。
+#                             旧 I4 は yuios_ref_road2_I4_archived.bin に退避。
+#                             凍結票: yuios_ref_freeze_ticket_I5_v1_0.md 参照。
+#                             MD5(I5)= 599a7f9d1ebf103f81f58450ea1b6491 (56416B)
+#                             ※この値は kernel_v12_11.asm ヘッダ記載のゴールデン値
+#                               および yuios_paired_impl_ledger_v1_0.md の確定値と
+#                               完全一致（3点照合済）。
+REF_BIN   := yuios_ref_road2_I5.bin
+
+.PHONY: all yuios dhrystone disk run regress verify clean dhrystone_o1
+
+all: yuios
+
+# ---- yuios 道2ビルド（S1〜S7・build_road2.sh とバイト等価）----
+$(YUIOS_BIN): $(FORTH_SRC) $(KERN_SRC) $(TGT) $(PRIM) mk_post1.sh
+	# S1 Force（forthカーネルコンパイル）
+	$(FORCE) --target ysd8800_kern --tgt-file $(TGT) --prim-file $(PRIM) $(FORTH_SRC) -o $(FORTH_ASM)
+	# S2 後処理1（#WORD_xxx 混入行 全自動抽出・No.1）build_road2.sh Step2 等価
+	bash ./mk_post1.sh $(FORTH_ASM) $(HASM)
+	# S3 後処理2（WORD_OS_START 定義直前に .global 挿入・案F2）
+	awk '/^WORD_OS_START:/ && !d { print ".global WORD_OS_START"; d=1 } { print }' \
+	    $(FORTH_ASM) > $(FORTH_ASM).g && mv $(FORTH_ASM).g $(FORTH_ASM)
+	# S4 hasm23 -c（forth.obj・load_addr=$$5100・has_org）
+	$(HASM) -c $(FORTH_ASM)
+	# S5 kernel UNDEF 化（#$$e96e -> #$$WORD_OS_START）
+	sed 's|#\$$e96e|#\$$WORD_OS_START|g' $(KERN_SRC) > $(KERN_ASM)
+	# S6 hasm23 -c（kernel.obj・load_addr=$$0000・UNDEF reloc=2）
+	$(HASM) -c $(KERN_ASM)
+	# S7 lnk23（--machine force 必須・L-E）
+	$(LNK) -o $(YUIOS_BIN) --sym $(YUIOS_SYM) --machine force $(FORTH_OBJ) $(KERN_OBJ)
+
+yuios: $(YUIOS_BIN)
+
+# ---- dhrystone ビルド（D1〜D7・L-B 準拠）----
+$(DHRY_BIN): $(DHRY_SRC) $(HARNESS)
+	# D1 scc23（3オプション必須・L-B）
+	$(SCC) --code-org 0x0400 --data-org 0x4000 --runtime-org 0x0100 -o dhry.asm $(DHRY_SRC)
+	# D2-D3 _main 取得
+	$(HASM) dhry.asm
+	# D4 JSR _main 直書き（.ONESHELL 前提・MAIN を行またぎ保持）
+	MAIN=$$(grep -E '^[0-9a-f]+ _main$$' dhry.asm.sym | awk '{print $$1}')
+	sed -E "s/JSR[[:space:]]+_main/JSR  \$$$${MAIN}/" $(HARNESS) > startup_harness23.asm
+	# D5 hasm23
+	$(HASM) startup_harness23.asm
+	# D6 lds 自動生成（No.4 の核心：手書き lds 廃止）
+	printf 'SECTION code 0x0000 dhry.asm.bin\nSECTION harness 0x0000 startup_harness23.asm.bin\n' > dhry.lds
+	# D7 lnk23（machine既定=baremetal）
+	# ★v1.4: --allow-overlap は暫定措置。lnk23 v2.02 の重なり検出に対し、
+	#   現行 dhry.lds（harness 110B が $0000-$006D を後勝ちで上書き）を通すため。
+	#   道2(.obj 固定配置)移行(T4)が済めば本オプションは不要になる。★
+	$(LNK) --allow-overlap -o $(DHRY_BIN) --sym dhry_final.sym dhry.lds
+
+dhrystone: $(DHRY_BIN)
+
+# ---- dhrystone -O1 ビルド（v1.4 新設・D9: -O1 ゲートの正本は本 Makefile）----
+$(DHRY_O1_BIN): $(DHRY_SRC) $(HARNESS)
+	$(SCC) -O1 --code-org 0x0400 --data-org 0x4000 --runtime-org 0x0100 -o dhry_o1.asm $(DHRY_SRC)
+	$(HASM) dhry_o1.asm
+	MAIN=$$(grep -E '^[0-9a-f]+ _main$$' dhry_o1.asm.sym | awk '{print $$1}')
+	sed -E "s/JSR[[:space:]]+_main/JSR  \$$$${MAIN}/" $(HARNESS) > startup_harness23_o1.asm
+	$(HASM) startup_harness23_o1.asm
+	printf 'SECTION code 0x0000 dhry_o1.asm.bin\nSECTION harness 0x0000 startup_harness23_o1.asm.bin\n' > dhry_o1.lds
+	$(LNK) --allow-overlap -o $(DHRY_O1_BIN) --sym dhry_o1.sym dhry_o1.lds
+
+dhrystone_o1: $(DHRY_O1_BIN)
+
+# ---- disk / run / regress / verify / clean ----
+disk:
+	$(MKFS) $(DISK) --size-kb $(DISK_KB) --add-file $(DISK_FILE)
+
+run: yuios disk
+	timeout 30 $(EMU) $(YUIOS_BIN) -q --disk $(DISK)
+
+regress: dhrystone dhrystone_o1
+	@echo '--- [-O0-strict] ---'
+	@timeout 30 $(EMU) $(DHRY_BIN) -q 2>&1 | grep -iE 'Dhrystones/sec|cycles|P:'
+	@echo '期待値(-O0-strict): Dhrystones/sec=818 / cycles=48875 / P:20'
+	@echo '--- [-O1] ---'
+	@timeout 30 $(EMU) $(DHRY_O1_BIN) -q 2>&1 | grep -iE 'Dhrystones/sec|cycles|P:'
+	@echo '期待値(-O1)       : Dhrystones/sec=827 / cycles=48325 / P:20'
+	@echo '--- [md5: -O0/-O1 は同サイズ 21,846B のため md5 でしか区別できない] ---'
+	@md5sum $(DHRY_BIN) $(DHRY_O1_BIN)
+	@echo '期待値: $(DHRY_BIN)=e185df32a1bf67da602c1924f5ec8cc3'
+	@echo '        $(DHRY_O1_BIN)=0b1a252301d9b22fa127d2da394d439e'
+
+verify: yuios
+	@if cmp -s $(YUIOS_BIN) $(REF_BIN); then \
+	   echo 'VERIFY OK: $(YUIOS_BIN) は基準 $(REF_BIN) と全56416バイト一致'; \
+	 else echo 'VERIFY FAIL: $(YUIOS_BIN) と基準 $(REF_BIN) の内容差あり（要調査）'; exit 1; fi
+
+clean:
+	rm -f $(FORTH_ASM)* $(KERN_ASM)* $(FORTH_OBJ) $(KERN_OBJ) \
+	      dhry.asm* startup_harness23.asm* dhry.lds \
+	      dhry_o1.asm* startup_harness23_o1.asm* dhry_o1.lds dhry_o1.sym \
+	      $(YUIOS_BIN) $(YUIOS_SYM) $(DHRY_BIN) $(DHRY_O1_BIN) dhry_final.sym
+	# 注：disk.img は誤消去防止のため clean 対象外（明示 rm を推奨）
